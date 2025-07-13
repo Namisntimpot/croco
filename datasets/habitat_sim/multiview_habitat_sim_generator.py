@@ -8,6 +8,7 @@ import habitat_sim
 import json
 from sklearn.neighbors import NearestNeighbors
 import cv2
+import magnum as mn
 
 # OpenCV to habitat camera convention transformation
 R_OPENCV2HABITAT = np.stack((habitat_sim.geo.RIGHT, -habitat_sim.geo.UP, habitat_sim.geo.FRONT), axis=0)
@@ -186,7 +187,7 @@ class MultiviewHabitatSimGenerator:
             depth_sensor_spec.sensor_type = habitat_sim.SensorType.DEPTH
             depth_sensor_spec.resolution = self.resolution
             depth_sensor_spec.hfov = self.hfov
-            depth_sensor_spec.position = [0.0, 0.0, 0]
+            depth_sensor_spec.position = mn.Vector3(0.0, 0.0, 0.0)
             depth_sensor_spec.orientation
 
             rgb_sensor_spec = habitat_sim.CameraSensorSpec()
@@ -194,7 +195,7 @@ class MultiviewHabitatSimGenerator:
             rgb_sensor_spec.sensor_type = habitat_sim.SensorType.COLOR
             rgb_sensor_spec.resolution = self.resolution
             rgb_sensor_spec.hfov = self.hfov
-            rgb_sensor_spec.position = [0.0, 0.0, 0]
+            rgb_sensor_spec.position = mn.Vector3(0.0, 0.0, 0.0)
             agent_cfg = habitat_sim.agent.AgentConfiguration(sensor_specifications=[rgb_sensor_spec, depth_sensor_spec])
 
             cfg = habitat_sim.Configuration(sim_cfg, [agent_cfg])
@@ -207,7 +208,7 @@ class MultiviewHabitatSimGenerator:
                 # Try to compute a navmesh
                 navmesh_settings = habitat_sim.NavMeshSettings()
                 navmesh_settings.set_defaults()
-                self.sim.recompute_navmesh(self.sim.pathfinder, navmesh_settings, True)
+                self.sim.recompute_navmesh(self.sim.pathfinder, navmesh_settings)
 
             # Ensure that the navmesh is not empty
             if not self.sim.pathfinder.is_loaded:

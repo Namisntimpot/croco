@@ -13,13 +13,13 @@ from tqdm import tqdm
 
 # Hardcoded path to the different scene datasets
 SCENES_DATASET = {
-    "hm3d": "./data/habitat-sim-data/scene_datasets/hm3d/",
-    "gibson": "./data/habitat-sim-data/scene_datasets/gibson/",
-    "habitat-test-scenes": "./data/habitat-sim/scene_datasets/habitat-test-scenes/",
-    "replica_cad_baked_lighting": "./data/habitat-sim/scene_datasets/replica_cad_baked_lighting/",
-    "replica_cad": "./data/habitat-sim/scene_datasets/replica_cad/",
-    "replica": "./data/habitat-sim/scene_datasets/ReplicaDataset/",
-    "scannet": "./data/habitat-sim/scene_datasets/scannet/"
+    "hm3d": "../data/habitat-sim-data/scene_datasets/hm3d/",
+    "gibson": "../data/habitat-sim-data/scene_datasets/gibson/",
+    "habitat-test-scenes": "../data/habitat-sim-data/scene_datasets/habitat-test-scenes/",
+    "replica_cad_baked_lighting": "../data/habitat-sim-data/scene_datasets/replica_cad_baked_lighting/",
+    "replica_cad": "../data/habitat-sim-data/scene_datasets/replica_cad/",
+    "replica": "../data/habitat-sim-data/scene_datasets/ReplicaDataset/",
+    "scannet": "../data/habitat-sim-data/scene_datasets/scannet/"
 }
 
 SceneData = collections.namedtuple("SceneData", ["scene_dataset_config_file", "scene", "navmesh", "output_dir"])

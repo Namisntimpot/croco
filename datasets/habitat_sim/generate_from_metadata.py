@@ -13,6 +13,7 @@ import PIL.Image
 import cv2
 import json
 from tqdm import tqdm
+import numpy as np
 
 def generate_multiview_images_from_metadata(metadata_filename,
                                             output_dir,
@@ -35,9 +36,20 @@ def generate_multiview_images_from_metadata(metadata_filename,
             if scene_datasets_paths is not None:
                 for dataset_label, dataset_path in scene_datasets_paths.items():
                     if value.startswith(dataset_label):
+                        # 需要为replica_cad的scene路径打个补丁..?
+                        if dataset_label == 'replica_cad_baked_lighting':
+                            basepath = os.path.dirname(value)
+                            fname = os.path.basename(value)
+                            fname, ext = os.path.splitext(fname)
+                            newname = "Baked_" + "_".join(fname.split("_")[-3:]) + ext
+                            value = os.path.join(basepath, 'stages', newname)
                         value = os.path.normpath(os.path.join(dataset_path, os.path.relpath(value, dataset_label)))
                         break
         metadata[key] = value
+
+    scenefile = metadata['scene']
+    if not os.path.exists(scenefile):
+        raise ValueError(f"Non-existent scene file: {scenefile}")
 
     # Overload some parameters
     for key, value in overload_params.items():
@@ -47,6 +59,8 @@ def generate_multiview_images_from_metadata(metadata_filename,
     generate_depth = metadata["generate_depth"]
 
     os.makedirs(output_dir, exist_ok=exist_ok)
+
+    print(generation_entries)
  
     generator = MultiviewHabitatSimGenerator(**generation_entries)
 
@@ -64,8 +78,11 @@ def generate_multiview_images_from_metadata(metadata_filename,
             img.save(filename)
             if generate_depth:
                 # Depth image as EXR file
-                filename = os.path.join(output_dir, f"{idx_label}_{observation_label}_depth.exr")
-                cv2.imwrite(filename, observation['depth'], [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF])
+                # filename = os.path.join(output_dir, f"{idx_label}_{observation_label}_depth.exr")
+                filename = os.path.join(output_dir, f"{idx_label}_{observation_label}_depth.png")
+                dep_mm_16bit = np.uint16(observation['depth'] * 1000)
+                # cv2.imwrite(filename, observation['depth'], [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_HALF])
+                cv2.imwrite(filename, dep_mm_16bit)
                 # Camera parameters
                 camera_params = dict([(key, observation[key].tolist()) for key in ("camera_intrinsics", "R_cam2world", "t_cam2world")])
                 filename = os.path.join(output_dir, f"{idx_label}_{observation_label}_camera_params.json")
