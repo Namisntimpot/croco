@@ -19,6 +19,7 @@ import json
 from collections import defaultdict, deque
 from pathlib import Path
 import numpy as np
+import importlib
 
 import torch
 import torch.distributed as dist
@@ -461,3 +462,10 @@ def adjust_learning_rate(optimizer, epoch, args):
             param_group["lr"] = lr
             
     return lr
+
+
+def load_obj_from_path(obj_path:str):
+    module_name, obj_name = obj_path.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    obj = getattr(module, obj_name)
+    return obj

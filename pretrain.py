@@ -42,6 +42,8 @@ def get_args_parser():
     # dataset 
     parser.add_argument('--dataset', default='habitat_release', type=str, help="training set")
     parser.add_argument('--transforms', default='crop224+acolor', type=str, help="transforms to apply") # in the paper, we also use some homography and rotation, but find later that they were not useful or even harmful
+    parser.add_argument('--link_config', default=None, type=str, help="module path to the link_config dict. None: do not use DpflowDataset")
+    parser.add_argument('--link_name', default="train", help="Name of the link to connect")
     # training 
     parser.add_argument('--seed', default=0, type=int, help="Random seed")
     parser.add_argument('--batch_size', default=64, type=int, help="Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus")
@@ -97,8 +99,14 @@ def main(args):
     cudnn.benchmark = True
 
     ## training dataset and loader 
-    print('Building dataset for {:s} with transforms {:s}'.format(args.dataset, args.transforms))
-    dataset = PairsDataset(args.dataset, trfs=args.transforms, data_dir=args.data_dir)
+    if args.link_config is None:
+        print('Building dataset for {:s} with transforms {:s}'.format(args.dataset, args.transforms))
+        dataset = PairsDataset(args.dataset, trfs=args.transforms, data_dir=args.data_dir)
+    else:
+        print(f'Building DpflowDataset using link_config: {args.link_config}.')
+        from datasets.links_dataset import DpLinkDataset
+        link_config = misc.load_obj_from_path(args.link_config)
+        dataset = DpLinkDataset(link_config, args.link_name)
     if world_size>1:
         sampler_train = torch.utils.data.DistributedSampler(
             dataset, num_replicas=world_size, rank=global_rank, shuffle=True
@@ -106,6 +114,7 @@ def main(args):
         print("Sampler_train = %s" % str(sampler_train))
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset)
+
     data_loader_train = torch.utils.data.DataLoader(
         dataset, sampler=sampler_train,
         batch_size=args.batch_size,
