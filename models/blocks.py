@@ -184,6 +184,7 @@ class DecoderBlock(nn.Module):
         self.norm_y = norm_layer(dim) if norm_mem else nn.Identity()
 
     def forward(self, x, y, xpos, ypos):
+        '''(x_t, y_t) -> (x_{t+1}, y_t), y is the reference and keeps invariant.'''
         x = x + self.drop_path(self.attn(self.norm1(x), xpos))
         y_ = self.norm_y(y)
         x = x + self.drop_path(self.cross_attn(self.norm2(x), y_, y_, xpos, ypos))

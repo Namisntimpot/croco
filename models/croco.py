@@ -142,7 +142,7 @@ class CroCoNet(nn.Module):
         # apply masking 
         B,N,C = x.size()
         if do_mask:
-            masks = self.mask_generator(x)
+            masks = self.mask_generator(x)  # B,N
             x = x[~masks].view(B, -1, C)
             posvis = pos[~masks].view(B, -1, 2)
         else:
@@ -247,3 +247,87 @@ class CroCoNet(nn.Module):
         # get target
         target = self.patchify(img1)
         return out, mask1, target
+
+
+class MMAE_CroCoNet(CroCoNet):
+    def __init__(self, 
+                 img_size=224, patch_size=16, mask_ratio=0.9, enc_embed_dim=768, 
+                 enc_depth=12, enc_num_heads=12, dec_embed_dim=512, dec_depth=8, dec_num_heads=16, 
+                 mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=0.000001), 
+                 norm_im2_in_dec=True, pos_embed='cosine'):
+        super().__init__(img_size, patch_size, mask_ratio, enc_embed_dim, enc_depth, 
+                         enc_num_heads, dec_embed_dim, dec_depth, dec_num_heads, mlp_ratio, 
+                         norm_layer, norm_im2_in_dec, pos_embed)
+        
+
+    def _decoder(self, feat1, pos1, masks1, feat2, pos2, masks2, return_all_blocks=False):
+        '''
+        return_all_blocks: if True, return the features at the end of every block 
+                           instead of just the features from the last block (eg for some prediction heads)
+                           
+        masks1 & masks2 can be None => assume image1 fully visible 
+        '''
+        visf1 = self.decoder_embed(feat1)
+        visf2 = self.decoder_embed(feat2)
+        B, Nenc1, C = visf1.size()
+        _, Nenc2, _ = visf2.size()
+        if masks1 is None:
+            f1_ = visf1
+        else:
+            Ntotal = masks1.size(1)
+            f1_ = self.mask_token.repeat(B, Ntotal, 1).to(dtype=visf1.dtype)
+            f1_[~masks1] = visf1.view(B*Nenc1, C)
+        if masks2 is None:
+            f2_ = visf2
+        else:
+            Ntotal = masks2.size(1)
+            f2_ = self.mask_token.repeat(B, Ntotal, 1).to(dtype=visf2.dtype)
+            f2_[~masks2] = visf2.view(B*Nenc2, C)
+        # add positional embedding.
+        if self.dec_pos_embed is not None:
+            f1_ = f1_ + self.dec_pos_embed
+            f2_ = f2_ + self.dec_pos_embed
+        # apply Transformer blocks
+        out1 = f1_
+        out2 = f2_
+        if return_all_blocks:
+            _out1, _out2 = [], []
+            for blk in self.dec_blocks:
+                tmp_out1, _ = blk(out1, out2, pos1, pos2)  # the second return value is equal to the second argum,ent
+                _out1.append(tmp_out1)
+                tmp_out2, _ = blk(out2, out1, pos2, pos1)
+                _out2.append(tmp_out2)
+                out1 = tmp_out1
+                out2 = tmp_out2
+            _out1[-1] = self.dec_norm(_out1[-1])
+            _out2[-1] = self.dec_norm(_out2[-1])
+            return _out1, _out2
+        else:
+            for blk in self.dec_blocks:
+                tmp_out1, _ = blk(out1, out2, pos1, pos2)
+                tmp_out2, _ = blk(out2, out1, pos2, pos1)
+                out1 = tmp_out1
+                out2 = tmp_out2
+            out1 = self.dec_norm(out1)
+            out2 = self.dec_norm(out2)
+            return out1, out2
+        
+    
+    def forward(self, img1, img2):
+        '''
+        img1: tensor of size B x 3 x img_size x img_size
+        img2: tensor of size B x 3 x img_size x img_size
+        
+        out will be    B x N x (3*patch_size*patch_size)
+        masks are also returned as B x N just in case 
+        '''
+        feat1, pos1, mask1 = self._encode_image(img1, do_mask=True)
+        feat2, pos2, mask2 = self._encode_image(img2, do_mask=True)
+        # decoder
+        decfeat1, decfeat2 = self._decoder(feat1, pos1, mask1, feat2, pos2, mask2)
+        out1 = self.prediction_head(decfeat1)
+        out2 = self.prediction_head(decfeat2)
+        # get target
+        target1 = self.patchify(img1)
+        target2 = self.patchify(img2)
+        return out1, mask1, target1, out2, mask2, target2

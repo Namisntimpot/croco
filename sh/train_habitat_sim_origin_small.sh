@@ -7,14 +7,14 @@ fi
 model_size=$1
 pose_emb_type=$2
 batchsize_per_gpu=64
-max_epoch=100
-sche_epoch=200
-warmup_epochs=10
-keep_freq=10
+max_epoch=50
+sche_epoch=100
+warmup_epochs=5
+keep_freq=5
 
 num_gpu=4
 num_cpu=12
-memory=81920
+memory=128
 datasets=habitat_release
 data_dir=../data/habitat-sim-data
 output_dir="exp/origin-habitat_sim-CroCo_${model_size}-${pose_emb_type}"
@@ -50,12 +50,16 @@ echo "torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --data
 platform=$3
 if [[ "$platform" == "cluster" ]]; then
     gpu_type=$4
+    echo "using dpflow"
+    link_config="datasets.link_config.link_config"
+    link_name="train"
     tlaunch --gpu=$num_gpu --cpu=$num_cpu --memory=$memory --positive-tag=$gpu_type -- \
         torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                  --batch_size $batchsize_per_gpu \
-                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq --print_freq $keep_freq
+                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
+                 --link_config $link_config --link_name $link_name
 else
     torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                 --batch_size $batchsize_per_gpu \
-                --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq --print_freq $keep_freq
+                --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq
 fi
