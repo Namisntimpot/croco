@@ -1,0 +1,7 @@
+enc_embed_dim: 1024
+enc_depth: 24
+enc_num_heads: 16
+dec_embed_dim: 768
+dec_num_heads: 12 
+dec_depth: 12 
+pos_embed: RoPE100

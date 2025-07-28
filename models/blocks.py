@@ -240,3 +240,60 @@ class PatchEmbed(nn.Module):
         w = self.proj.weight.data
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1])) 
 
+
+
+### blocks for matching tasks...
+class CorssAttention_Matching(CrossAttention):
+    '''additionally output attention map'''
+    def __init__(self, dim, rope=None, num_heads=8, qkv_bias=False, attn_drop=0, proj_drop=0, softmax_attn_map=True):
+        super().__init__(dim, rope, num_heads, qkv_bias, attn_drop, proj_drop)
+        self.softmax_attn_map = softmax_attn_map
+
+    def forward(self, query, key, value, qpos, kpos):
+        '''return x(B,N,C), attn_map (B,num_heads, N, N)'''
+        B, Nq, C = query.shape
+        Nk = key.shape[1]
+        Nv = value.shape[1]
+        
+        q = self.projq(query).reshape(B,Nq,self.num_heads, C// self.num_heads).permute(0, 2, 1, 3)  # B, num_heads, N, C//num_heads
+        k = self.projk(key).reshape(B,Nk,self.num_heads, C// self.num_heads).permute(0, 2, 1, 3)
+        v = self.projv(value).reshape(B,Nv,self.num_heads, C// self.num_heads).permute(0, 2, 1, 3)
+        
+        if self.rope is not None:
+            q = self.rope(q, qpos)
+            k = self.rope(k, kpos)
+            
+        attn = (q @ k.transpose(-2, -1)) * self.scale  # B,num_heads, N, N, 1st N is Quary
+        ret_attn = attn.clone().detach()
+        attn = attn.softmax(dim=-1)
+        if self.softmax_attn_map:
+            ret_attn = attn.clone().detach()
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, Nq, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x, ret_attn
+
+
+class DecoderBlock_Matching(DecoderBlock):
+    def __init__(self, dim, num_heads, mlp_ratio=4, qkv_bias=False, drop=0, 
+                 attn_drop=0, drop_path=0, act_layer=nn.GELU, norm_layer=nn.LayerNorm, 
+                 norm_mem=True, rope=None, softmax_attn_map=True):
+        super().__init__(dim, num_heads, mlp_ratio, qkv_bias, drop, attn_drop, drop_path, act_layer, norm_layer, norm_mem, rope)
+        # recreate cross attention layer.
+        self.cross_attn = CorssAttention_Matching(
+            dim, rope=rope, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
+            softmax_attn_map=softmax_attn_map
+        )
+
+    def forward(self, x, y, xpos, ypos):
+        '''(x_t, y_t) -> (x_{t+1}, y_t), y is the reference and keeps invariant.'''
+        x = x + self.drop_path(self.attn(self.norm1(x), xpos))
+        y_ = self.norm_y(y)
+
+        x_after_cross_attn, attn_map = self.cross_attn(self.norm2(x), y_, y_, xpos, ypos)
+
+        x = x + self.drop_path(x_after_cross_attn)
+        x = x + self.drop_path(self.mlp(self.norm3(x)))
+        return x, y, attn_map

@@ -1,0 +1,11 @@
+model:
+  task: matching
+  pretrain_type: croco
+  kwargs: configs/croco_large_model_args.yaml
+  pretrained_ckpt: exp/CroCo_V2_ViTLarge_BaseDecoder.pth
+
+inference:
+  reciprocity: true
+  suppress_1st_token: false
+  attn_layers_adopted: null
+  temperature: 0.02

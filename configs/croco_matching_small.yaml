@@ -1,0 +1,21 @@
+model:
+  task: matching
+  pretrain_type: croco
+  kwargs: configs/croco_small_model_args.yaml
+  pretrained_ckpt: exp/origin-habitat_sim-CroCo_small-curope/checkpoint-49.pth
+
+data:
+  img_size: [240, 240]  # h*w
+  hpatches_list_csv:
+    pair_1_2: datasets/hpatches/hpatches_1_2.csv
+    pair_1_3: datasets/hpatches/hpatches_1_3.csv
+    pair_1_4: datasets/hpatches/hpatches_1_4.csv
+    pair_1_5: datasets/hpatches/hpatches_1_5.csv
+    pair_1_6: datasets/hpatches/hpatches_1_6.csv
+    pair_all: datasets/hpatches/hpatches_all.csv
+
+inference:
+  reciprocity: true
+  suppress_1st_token: false
+  attn_layers_adopted: null
+  temperature: 0.02

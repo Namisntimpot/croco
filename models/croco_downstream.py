@@ -116,7 +116,7 @@ class CroCoDownstreamBinocular(CroCoNet):
         out, out2, pos, pos2 = self.encode_image_pairs(img1, img2, return_all_blocks=return_all_blocks)
         if return_all_blocks:
             decout = self._decoder(out[-1], pos, None, out2, pos2, return_all_blocks=return_all_blocks)
-            decout = out+decout
+            decout = out+decout   # 拼接图1的enc_out和dec_out
         else:
             decout = self._decoder(out, pos, None, out2, pos2, return_all_blocks=return_all_blocks)
         return self.head(decout, img_info)

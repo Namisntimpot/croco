@@ -411,6 +411,7 @@ class DPTOutputAdapter(nn.Module):
 
     def adapt_tokens(self, encoder_tokens):
         # Adapt tokens
+        # nothing changes here?
         x = []
         x.append(encoder_tokens[:, :])
         x = torch.cat(x, dim=-1)
@@ -434,9 +435,9 @@ class DPTOutputAdapter(nn.Module):
         # Reshape tokens to spatial representation
         layers = [rearrange(l, 'b (nh nw) c -> b c nh nw', nh=N_H, nw=N_W) for l in layers]
 
-        layers = [self.act_postprocess[idx](l) for idx, l in enumerate(layers)]
+        layers = [self.act_postprocess[idx](l) for idx, l in enumerate(layers)]  # 调整分辨率
         # Project layers to chosen feature dim
-        layers = [self.scratch.layer_rn[idx](l) for idx, l in enumerate(layers)]
+        layers = [self.scratch.layer_rn[idx](l) for idx, l in enumerate(layers)] # 调整channel_dim
 
         # Fuse layers using refinement stages
         path_4 = self.scratch.refinenet4(layers[3])

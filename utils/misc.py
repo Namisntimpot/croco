@@ -20,6 +20,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 import numpy as np
 import importlib
+import megfile
 
 import torch
 import torch.distributed as dist
@@ -469,3 +470,18 @@ def load_obj_from_path(obj_path:str):
     module = importlib.import_module(module_name)
     obj = getattr(module, obj_name)
     return obj
+
+
+def make_directories(*dirs):
+    for d in dirs:
+        if d is None:
+            continue
+        megfile.smart_makedirs(d, exist_ok=True)
+
+
+def parse_patch_size(attn_map: torch.Tensor, ori_h: int, ori_w: int):
+    '''attn_map: (B,) n_patches, n_patches'''
+    n_patches = attn_map.shape[-2]
+    p2 = ori_h * ori_w / n_patches
+    p = np.sqrt(p2)
+    return int(p)

@@ -1,0 +1,2 @@
+mask_ratio: 0.9
+pos_embed: RoPE100
