@@ -9,15 +9,17 @@ pose_emb_type=$2
 batchsize_per_gpu=64
 max_epoch=300
 sche_epoch=600
-warmup_epochs=25
-keep_freq=25
+warmup_epochs=30
+keep_freq=20
+seed=42
+blr=0.0001 # 1.5e-4
 
 num_gpu=8
 num_cpu=16
-memory=256
+memory=288  # 256G is enough...
 datasets=habitat_release
 data_dir=../data/habitat-sim-data
-output_dir="exp/origin-habitat_sim-CroCo_${model_size}-${pose_emb_type}"
+output_dir="exp/origin-habitat_sim-CroCo_${model_size}-${pose_emb_type}_blr-1e-4"
 
 if [[ "$model_size" == small ]]; then
     model="CroCoNet("
@@ -45,7 +47,8 @@ mkdir -p $output_dir
 
 echo "torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                  --batch_size $batchsize_per_gpu \
-                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq --print_freq $keep_freq"
+                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq --print_freq $keep_freq  \
+                 --seed $seed --blr $blr"
 
 platform=$3
 if [[ "$platform" == "cluster" ]]; then
@@ -57,9 +60,11 @@ if [[ "$platform" == "cluster" ]]; then
         torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                  --batch_size $batchsize_per_gpu \
                  --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
-                 --link_config $link_config --link_name $link_name
+                 --link_config $link_config --link_name $link_name \
+                 --seed $seed --blr $blr
 else
     torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                 --batch_size $batchsize_per_gpu \
-                --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq
+                --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
+                --seed $seed --blr $blr
 fi

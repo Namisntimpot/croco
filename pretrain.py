@@ -26,6 +26,8 @@ import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
+# DEBUG
+from torch.distributed.elastic.multiprocessing.errors import record
 
 import utils.misc as misc
 from utils.misc import NativeScalerWithGradNormCount as NativeScaler
@@ -71,7 +73,7 @@ def get_args_parser():
 
 
 
-        
+# @record
 def main(args):
     misc.init_distributed_mode(args)
     global_rank = misc.get_rank()
