@@ -3,6 +3,18 @@ model:
   pretrain_type: croco
   kwargs: configs/croco_large_model_args.yaml
   pretrained_ckpt: exp/CroCo_V2_ViTLarge_BaseDecoder.pth
+  override_kwargs:
+    softmax_attn_map: false
+
+data:
+  img_size: [240, 240]  # h*w
+  hpatches_list_csv:
+    pair_1_2: datasets/hpatches/hpatches_1_2.csv
+    pair_1_3: datasets/hpatches/hpatches_1_3.csv
+    pair_1_4: datasets/hpatches/hpatches_1_4.csv
+    pair_1_5: datasets/hpatches/hpatches_1_5.csv
+    pair_1_6: datasets/hpatches/hpatches_1_6.csv
+    pair_all: datasets/hpatches/hpatches_all.csv
 
 inference:
   reciprocity: true

@@ -11,9 +11,9 @@ link_config = {
         {
             "name": "nid",
             "class": "datasets.links.NidLink",
-            "parallelism": 2,
+            "parallelism": 8,
             "cpu": 1,
-            "memory": 32 * 1024,
+            "memory": 16 * 1024,
             "grouping": "none",
             "fragment_size": 256,
             "output_buffer_size": 512,
@@ -22,14 +22,14 @@ link_config = {
         {
             "name": "train",
             "class": "datasets.links.ProcessLink",
-            "parallelism": 64,
+            "parallelism": 192,
             "cpu": 1,
             "preemptible_flag": 1,
             "memory": 3 * 1024,
             "grouping": "cwd",
             "fragment_size": 4,
             "output_buffer_size": 64,
-            "recieve_buffer_size": 256,
+            "recieve_buffer_size": 64,
         },
     ],
 }

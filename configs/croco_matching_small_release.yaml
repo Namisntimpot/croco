@@ -1,8 +1,9 @@
 model:
   task: matching
-  pretrain_type: mmae
-  kwargs: configs/croco_small_model_args.yaml
-  pretrained_ckpt: exp/mmae-habitat_sim-CroCo_small-curope/checkpoint-49.pth
+  pretrain_type: croco
+  kwargs:
+    mask_ratio: 0.9
+  pretrained_ckpt: exp/CroCo.pth
   override_kwargs:
     softmax_attn_map: false
 

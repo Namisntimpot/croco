@@ -16,9 +16,10 @@ tasks = {
     }
 }
 
-def make_model(task, pretrain_type, **kwargs):
+def make_model(task, pretrain_type, image_size, **kwargs):
     assert task in tasks
     d = tasks[task]
     assert pretrain_type in d
     model_class = d[pretrain_type]
-    return model_class(**kwargs)
+    return model_class(img_size=image_size, **kwargs)
+    # return model_class(**kwargs)

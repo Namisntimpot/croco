@@ -26,26 +26,26 @@ def warp_image(img:torch.Tensor, coord:torch.Tensor):
         warped = warped.squeeze(0)
     return warped
 
-def scale_corresp(corresp:torch.Tensor, new_h:int, new_w:int):
+def scale_corresp(flow:torch.Tensor, new_h:int, new_w:int):
     '''corresp: ((B,) 2, H, W)'''
-    batched = corresp.ndim == 4
+    batched = flow.ndim == 4
     if not batched:
-        corresp = corresp.unsqueeze(0)
-    ori_h, ori_w = corresp.shape[-2:]
+        flow = flow.unsqueeze(0)
+    ori_h, ori_w = flow.shape[-2:]
     scale_h = new_h / ori_h
     scale_w = new_w / ori_w
-    scale = torch.tensor([scale_w, scale_h], dtype=corresp.dtype, device=corresp.device).view(2,1,1)
-    corresp = F.interpolate(corresp, (new_h, new_w), mode='bilinear', align_corners=False)
-    corresp = corresp * scale
-    grid = get_2D_grid(new_w, new_h)
-    flow = corresp - grid
+    scale = torch.tensor([scale_w, scale_h], dtype=flow.dtype, device=flow.device).view(2,1,1)
+    flow = F.interpolate(flow, (new_h, new_w), mode='bilinear', align_corners=False)
+    flow = flow * scale
+    grid = get_2D_grid(new_w, new_h).to(flow.device)
+    corresp = flow + grid
     if not batched:
         corresp = corresp.squeeze(0)
         flow = flow.squeeze(0)
     return corresp, flow
 
 
-def apply_colormap(arr:np.ndarray | torch.Tensor, vmin, vmax, cmap=cv2.COLORMAP_JET):
+def apply_colormap(arr:np.ndarray, vmin, vmax, cmap=cv2.COLORMAP_JET):
     if isinstance(arr, torch.Tensor):
         arr = arr.detach().cpu().numpy()
     arr = arr.squeeze()

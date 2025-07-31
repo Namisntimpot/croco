@@ -41,10 +41,10 @@ def flow_matrics(flow_pred:torch.Tensor, flow_gt:torch.Tensor, mask:torch.Tensor
     '''flow: B*2*H*W, mask: B*H*W'''
     epe = torch.sum((flow_pred - flow_gt) ** 2, dim=1).sqrt()  # Euclidean distance, B*H*W
     valid_epe = epe[mask]
-    aepe = epe.mean()
-    pck_1 = epe.le(1.0).float().mean()
-    pck_3 = epe.le(3.0).float().mean()
-    pck_5 = epe.le(5.0).float().mean()
+    aepe = valid_epe.mean()
+    pck_1 = valid_epe.le(1.0).float().mean()
+    pck_3 = valid_epe.le(3.0).float().mean()
+    pck_5 = valid_epe.le(5.0).float().mean()
 
     return {
         'aepe': aepe, 'pck_1': pck_1, 'pck_3': pck_3, 'pck_5': pck_5

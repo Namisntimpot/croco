@@ -15,7 +15,7 @@ import imageio
 from models import make_model
 from models.criterion import flow_matrics
 from datasets.hpatches.hpatches_dataset import HPatchesDataset, DirectoryDataset
-from utils.config import load_config
+from utils.config import load_config, args_parse_bool_str
 from utils.transforms import scale_corresp, apply_colormap, warp_image
 from utils.misc import make_directories
 
@@ -32,30 +32,33 @@ def parse_args():
     parser.add_argument("-flow", "--flow_path", type=str, default=None, help="There might be (pseudo) gt flow (e.g., through structured light decoding)."
                         "they must be .npy files containing H*W*2 array. Large values indicate invalid pixels.")
     
-    parser.add_argument("--output_path", type=str, help="path to the output directory.")
+    parser.add_argument("-o", "--output_path", type=str, help="path to the output directory.")
     parser.add_argument("-o_attn", "--save_attn_map", action='store_true', help="whether to save attention map.")
     parser.add_argument("-o_flow", "--save_flow", action="store_true", help="whether to save flow data.")
     parser.add_argument("-o_warp", "--save_warp", action='store_true', help="whether to save warped image.")
 
-    parser.add_argument("--reciprocity", type=bool, default=None, help="reciprocity. If not None, it is used to overwrite what the config specifies.")
-    parser.add_argument("--suppress_1st_token", type=bool, default=None, help="whether to suppress the attention weight of the 1st token."
+    parser.add_argument("--reciprocity", type=str, default=None, choices=['True', 'False'], help="reciprocity. If not None, it is used to overwrite what the config specifies.")
+    parser.add_argument("--suppress_1st_token", type=str, default=None, choices=['True', 'False'], help="whether to suppress the attention weight of the 1st token."
                         "If not None, it will overwrite what the config file specifies.")
     parser.add_argument("--attn_layers_adopted", type=str, default=None, help="Which attention layers should be used for construct correlation volume."
                         "It should be comma seperated string of numbers. If not None, it will overwrite what the config file specifies.")
     parser.add_argument("--temperature", type=float, default=None, help="temperature. If not None, it will overwrite the config.")
     parser.add_argument("--img_h", type=int, default=None, help="input image height. If not None, it will overwrite the config.")
     parser.add_argument("--img_w", type=int, default=None, help="input image width.  If not None, it will overwrite the config.")
+    parser.add_argument("--softmax_attn_map", type=bool, default=None, help="whether apply softmax to the attention map. If not None, it will overwrite the config.")
     args = parser.parse_args()
+    args = args_parse_bool_str(args)
 
     config = load_config(args.config_path)
     # overwrite
-    config.model.pretrained_ckpt = args.parameter if args.parameter is not None else config.model.pretrained_ckpt
+    config.model.pretrained_ckpt = args.parameter if args.parameter is not None and args.parameter!="no" else config.model.pretrained_ckpt
+    if args.softmax_attn_map is not None:
+        config.model.kwargs['softmax_attn_map'] = args.softmax_attn_map
     config.inference.reciprocity = args.reciprocity if args.reciprocity is not None else config.inference.reciprocity
     config.inference.suppress_1st_token = args.suppress_1st_token if args.suppress_1st_token is not None else config.inference.suppress_1st_token
-    config.inference.attn_layers_adopted = args.attn_layers_adopted if args.attn_layers_adopted is not None else config.inference.attn_layers_adopted
+    config.inference.attn_layers_adopted = args.attn_layers_adopted.split(",") if args.attn_layers_adopted is not None else config.inference.attn_layers_adopted
     config.inference.temperature = args.temperature if args.temperature is not None else config.inference.temperature
     config.data.img_size = (args.img_h, args.img_w) if args.img_h is not None and args.img_w is not None else config.data.img_size
-
     args.config = config
     return args
 
@@ -69,11 +72,11 @@ def save_attention_map(attn_dir:str, key:str, src_img:torch.Tensor, trg_img:torc
     htrg, wtrg = trg_img.shape[-2:]
     n_patch_src, n_patch_trg = attn_map.shape
     patch_size = int(np.sqrt(hsrc*wsrc / n_patch_src))
-    h_patch_src, w_patch_src = hsrc / patch_size, wsrc / patch_size
-    h_patch_trg, w_patch_trg = htrg / patch_size, wtrg / patch_size
+    h_patch_src, w_patch_src = hsrc // patch_size, wsrc // patch_size
+    h_patch_trg, w_patch_trg = htrg // patch_size, wtrg // patch_size
     attn_map = attn_map.reshape(h_patch_src, w_patch_src, h_patch_trg, w_patch_trg).detach().cpu().numpy()
     attn_data = {
-        "source_path": source_path, "target_path": target_path, "attn_map": attn_map
+        "source_path": source_path, "target_path": target_path, "attn_map": attn_map, "h": hsrc, "w": wsrc
     }
     suffix = "_" + suffix if len(suffix) > 0 and not suffix.startswith("_") else suffix
     path = os.path.join(attn_dir, f"{key}{suffix}.npy")
@@ -97,23 +100,29 @@ def save_flow(flow_dir: str, key:str, flow:torch.Tensor, err_dir:str=None, flow_
             imageio.imwrite(f, err_img, format='jpg')
 
 
-def save_warped_img(warp_dir:str, key:str, corresp:torch.Tensor, src_img:torch.Tensor, trg_img:torch.Tensor, suffix="", normalized=True):
+def save_warped_img(warp_dir:str, key:str, corresp:torch.Tensor, src_img:torch.Tensor, trg_img:torch.Tensor, mask:torch.Tensor, suffix="", normalized=True):
     '''src_img, trg_img: C*H*W, corresp: 2*H*W
        if normalized, the image should be unnormalized before being saved.'''
     suffix = "_" + suffix if len(suffix) > 0 and not suffix.startswith("_") else suffix
     warp_path = os.path.join(warp_dir, f"{key}{suffix}.jpg")
     
-    warped_image = warp_image(trg_img, corresp)
     if normalized:
-        mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32, device=warped_image.device).view(3,1,1)
-        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32, device=warped_image.device).view(3,1,1)
-        warped_image = warped_image * std + mean
+        mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32, device=trg_img.device).view(3,1,1)
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32, device=trg_img.device).view(3,1,1)
+        trg_img = trg_img * std + mean
         src_img = src_img * std + mean
-    src_img = np.uint8(src_img.detach().squeeze().permute(1,2,0).cpu().numpy())
+
+    warped_image = warp_image(src_img, corresp) * mask
     warped_image = np.uint8(warped_image.detach().squeeze().permute(1,2,0).cpu().numpy() * 255)
-    cat = np.concatenate([src_img, warped_image], axis=1)
+    trg_img = np.uint8(trg_img.detach().squeeze().permute(1,2,0).cpu().numpy() * 255)
+    cat = np.concatenate([trg_img, warped_image], axis=1)
     with megfile.smart_open(warp_path, 'wb') as f:
         imageio.imwrite(warp_path, cat, 'jpg')
+
+
+def save_config_to_json(p, config:dict):
+    with megfile.smart_open(p, mode='w') as f:
+        json.dump(config, f, indent=4)
 
 
 def matching_task(model:torch.nn.Module, dataset:torch.utils.data.Dataset, args):
@@ -139,6 +148,8 @@ def matching_task(model:torch.nn.Module, dataset:torch.utils.data.Dataset, args)
         raise ValueError("The specified source_path and target_path don't have ground-truth flow,"
                          "and nothing is specified to be saved. The script won't produce anything and stops here.")
     
+    save_config_to_json(os.path.join(args.output_path, "config.json"), args.config)
+    
     for idx, data in iterator:
         key:str = data['key'][0]
         src_img:torch.Tensor = data['source_image'].to(device)
@@ -155,11 +166,72 @@ def matching_task(model:torch.nn.Module, dataset:torch.utils.data.Dataset, args)
             corresp: torch.Tensor = data['corresp'].to(device)
             mask:torch.Tensor = data['mask'].to(device)
 
-        out = model.forward(src_img, trg_img, **args.inference)
+        out = model.forward(trg_img, src_img, **args.config.inference)
         attn_maps, corresp_pred, flow_pred = out[-3:]
         h_pred, w_pred = corresp_pred.shape[-2:]
+        # # DEBUG
+        # corresp_pred_patch = corresp_pred
+        # flow_pred_patch = flow_pred
+        # # END_DEBUG
         if h_pred != h or w_pred != w:
-            corresp_pred, flow_pred = scale_corresp(corresp_pred, h, w)
+            # corresp_pred, flow_pred = scale_corresp(corresp_pred, h, w)
+            corresp_pred, flow_pred = scale_corresp(flow_pred, h, w)
+        # # DEBUG
+        # import matplotlib.pyplot as plt
+        # np.save("corresp_pred.npy", corresp_pred.detach().squeeze().cpu().numpy())
+        # np.save("flow_pred.npy", flow_pred.detach().squeeze().cpu().numpy())
+        # np.save("flow_pred_patch.npy", flow_pred_patch.detach().squeeze().cpu().numpy())
+        # np.save("flow.npy", flow.detach().squeeze().cpu().numpy())
+        # np.save("mask.npy", mask.detach().squeeze().cpu().numpy())
+        # vec = torch.sum(flow.squeeze()**2, dim=0).sqrt().cpu().numpy()
+        # vmin = vec.min()
+        # vmax = vec.max()
+        # plt.imshow(vec, cmap='jet', vmin=vmin, vmax=vmax)
+        # plt.colorbar()
+        # plt.savefig("tmp_flow_gt.png")
+        # plt.close()
+        # vec_pred = torch.sum(flow_pred.squeeze()**2, dim=0).sqrt().cpu().numpy()
+        # plt.imshow(vec_pred, cmap='jet', vmin=vmin, vmax=vmax)
+        # plt.colorbar()
+        # plt.savefig("tmp_flow_pred.png")
+        # plt.close()
+
+        # vec_pred_patch = torch.sum(flow_pred_patch.squeeze()**2, dim=0).sqrt().cpu().numpy()
+        # plt.imshow(vec_pred_patch, cmap='jet', vmin=vec_pred_patch.min(), vmax=vec_pred_patch.max())
+        # plt.colorbar()
+        # plt.savefig("tmp_flow_pred_patch.png")
+        # plt.close()
+
+        # x = corresp.squeeze()[0].cpu().numpy()
+        # vmin = x.min()
+        # vmax = x.max()
+        # plt.imshow(x, cmap='jet', vmin=vmin, vmax=vmax)
+        # plt.colorbar()
+        # plt.savefig("tmp_corresp_x_gt.png")
+        # plt.close()
+        # x = corresp_pred.squeeze()[0].cpu().numpy()
+        # print(x.min(), x.max())
+        # plt.imshow(x, cmap='jet', vmin=vmin, vmax=vmax)
+        # plt.colorbar()
+        # plt.savefig("tmp_corresp_x_pred.png")
+        # plt.close()
+
+        # y = corresp.squeeze()[1].cpu().numpy()
+        # vmin = y.min()
+        # vmax = y.max()
+        # plt.imshow(y, cmap='jet', vmin=vmin, vmax=vmax)
+        # plt.colorbar()
+        # plt.savefig("tmp_corresp_y_gt.png")
+        # plt.close()
+        # y = corresp_pred.squeeze()[1].cpu().numpy()
+        # print(y.min(), y.max())
+        # plt.imshow(y, cmap='jet', vmin=vmin, vmax=vmax)
+        # plt.colorbar()
+        # plt.savefig("tmp_corresp_y_pred.png")
+        # plt.close()
+        # exit(0)
+        # # END_DEBUG
+
         if has_gt:
             mat = flow_matrics(flow_pred, flow, mask)
             mat_str = f"aepe_{mat['aepe']:.3f}"
@@ -194,9 +266,11 @@ def main():
     config = args.config
 
     model_config = config.model
+    data_config = config.data
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    print("use device: ", device)
     # initialize model
-    model:torch.nn.Module = make_model(model_config.task, model_config.pretrain_type, **model_config.kwargs)
+    model:torch.nn.Module = make_model(model_config.task, model_config.pretrain_type, data_config.img_size, **model_config.kwargs)
     ckpt = torch.load(model_config.pretrained_ckpt, map_location='cpu')
     ckpt = ckpt['model'] if 'model' in ckpt else ckpt
     model.load_state_dict(ckpt)
@@ -207,11 +281,11 @@ def main():
     make_directories(args.output_path)
 
     # initialize dataset and dataloader
-    data_config = config.data
     if args.hpatches_root is not None:
         # hpatches benchmark
         ret = {}
         original_output_path = args.output_path
+        save_config_to_json(os.path.join(original_output_path, "config.json"), config)
         for pair_name, path_list_csv in data_config.hpatches_list_csv.items():
             args.output_path = os.path.join(original_output_path, pair_name)
             make_directories(args.output_path)
@@ -219,7 +293,7 @@ def main():
             ds = HPatchesDataset(args.hpatches_root, path_list_csv, data_config.img_size, True)
             pair_ret = matching_task(model, ds, args)
             ret[pair_name] = pair_ret
-            for k, v in ret.items():
+            for k, v in pair_ret.items():
                 print(f"{k}: {v}")
 
         with megfile.smart_open(os.path.join(original_output_path, 'matrics.json'), 'w') as f:

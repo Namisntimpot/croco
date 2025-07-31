@@ -264,7 +264,7 @@ class CorssAttention_Matching(CrossAttention):
             k = self.rope(k, kpos)
             
         attn = (q @ k.transpose(-2, -1)) * self.scale  # B,num_heads, N, N, 1st N is Quary
-        ret_attn = attn.clone().detach()
+        ret_attn = attn.clone()
         attn = attn.softmax(dim=-1)
         if self.softmax_attn_map:
             ret_attn = attn.clone().detach()

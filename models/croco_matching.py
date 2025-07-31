@@ -36,6 +36,7 @@ class CroCoNet(nn.Module):
                  norm_layer=partial(nn.LayerNorm, eps=1e-6),
                  norm_im2_in_dec=True,   # whether to apply normalization of the 'memory' = (second image) in the decoder 
                  pos_embed='cosine',     # positional embedding (either cosine or RoPE100)
+                 softmax_attn_map=True,
                 ):
                 
         super(CroCoNet, self).__init__()
@@ -77,7 +78,7 @@ class CroCoNet(nn.Module):
         self._set_mask_token(dec_embed_dim)
 
         # decoder 
-        self._set_decoder(enc_embed_dim, dec_embed_dim, dec_num_heads, dec_depth, mlp_ratio, norm_layer, norm_im2_in_dec)
+        self._set_decoder(enc_embed_dim, dec_embed_dim, dec_num_heads, dec_depth, mlp_ratio, norm_layer, norm_im2_in_dec, softmax_attn_map)
         
         # prediction head 
         self._set_prediction_head(dec_embed_dim, patch_size)
@@ -94,14 +95,15 @@ class CroCoNet(nn.Module):
     def _set_mask_token(self, dec_embed_dim):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, dec_embed_dim))
         
-    def _set_decoder(self, enc_embed_dim, dec_embed_dim, dec_num_heads, dec_depth, mlp_ratio, norm_layer, norm_im2_in_dec):
+    def _set_decoder(self, enc_embed_dim, dec_embed_dim, dec_num_heads, dec_depth, mlp_ratio, norm_layer, norm_im2_in_dec, softmax_attn_map=True):
         self.dec_depth = dec_depth
         self.dec_embed_dim = dec_embed_dim
         # transfer from encoder to decoder 
         self.decoder_embed = nn.Linear(enc_embed_dim, dec_embed_dim, bias=True)
         # transformer for the decoder 
         self.dec_blocks = nn.ModuleList([
-            DecoderBlock(dec_embed_dim, dec_num_heads, mlp_ratio=mlp_ratio, qkv_bias=True, norm_layer=norm_layer, norm_mem=norm_im2_in_dec, rope=self.rope)
+            DecoderBlock(dec_embed_dim, dec_num_heads, mlp_ratio=mlp_ratio, qkv_bias=True, norm_layer=norm_layer, norm_mem=norm_im2_in_dec, rope=self.rope,
+                         softmax_attn_map=softmax_attn_map)
             for i in range(dec_depth)])
         # final norm layer 
         self.dec_norm = norm_layer(dec_embed_dim)
@@ -264,7 +266,7 @@ class CroCoNet(nn.Module):
             attn_maps = attn_maps_img2_as_ref
         
         corresp, flow = self._weighted_sum_attn_map(
-            attn_maps.view(b, h//self.patch_embed.patch_size, w//self.patch_embed.patch_size, -1), temperature
+            attn_maps.view(b, h//self.patch_embed.patch_size[0], w//self.patch_embed.patch_size[0], -1), temperature
         )  # corresp: B,2,h//patch_size,w//patch_size
 
         # prediction head 
@@ -289,13 +291,12 @@ class CroCoNet(nn.Module):
         beta: temperature.  
         '''
         b,h,w,p = corr.shape
-        corr = F.softmax(corr, dim=-1)
+        corr = F.softmax(corr / beta, dim=-1)
         corr = corr.view(-1, h, w, h, w)  # (source hxw) x (target hxw)  
 
         grid_y, grid_x = torch.meshgrid(torch.arange(h, device=corr.device), torch.arange(w, device=corr.device), indexing='ij')  # hxw
         grid = torch.stack([grid_x, grid_y], dim=0).float()  # grid coordinate, 2xhxw
-
-        corresp = torch.sum(corr.unsqueeze(-3) * grid, dim=(-2,-1))  # b*2*source_h*source_w
+        corresp = torch.sum(corr.unsqueeze(-3) * grid, dim=(-2,-1)).permute(0, 3, 1, 2)  # b*2*source_h*source_w
         flow = corresp - grid
 
         return corresp, flow
@@ -306,10 +307,10 @@ class MMAE_CroCoNet(CroCoNet):
                  img_size=224, patch_size=16, mask_ratio=0.9, enc_embed_dim=768, 
                  enc_depth=12, enc_num_heads=12, dec_embed_dim=512, dec_depth=8, dec_num_heads=16, 
                  mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=0.000001), 
-                 norm_im2_in_dec=True, pos_embed='cosine'):
+                 norm_im2_in_dec=True, pos_embed='cosine', softmax_attn_map=True,):
         super().__init__(img_size, patch_size, mask_ratio, enc_embed_dim, enc_depth, 
                          enc_num_heads, dec_embed_dim, dec_depth, dec_num_heads, mlp_ratio, 
-                         norm_layer, norm_im2_in_dec, pos_embed)
+                         norm_layer, norm_im2_in_dec, pos_embed, softmax_attn_map)
         
 
     def _decoder(self, feat1, pos1, masks1, feat2, pos2, masks2, return_all_blocks=False):
@@ -395,7 +396,7 @@ class MMAE_CroCoNet(CroCoNet):
         attn_maps = (attn_maps_img2_as_ref + attn_maps_img1_as_ref.transpose(-1, -2)) / 2
         
         corresp, flow = self._weighted_sum_attn_map(
-            attn_maps.view(b, h//self.patch_embed.patch_size, w//self.patch_embed.patch_size, -1), temperature
+            attn_maps.view(b, h//self.patch_embed.patch_size[0], w//self.patch_embed.patch_size[0], -1), temperature
         )  # B, 2, h//patch_size, w//patch_size
 
         out1 = self.prediction_head(decfeat1)

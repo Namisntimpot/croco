@@ -1,12 +1,12 @@
 #!/bin/bash
 if [[ $# -eq 0 ]]; then
-    echo "usage: train_habitat_sim_origin.sh model_size(small/large) pose_emb_type(cosine/curope) platform(local/cluster) gpu_type(4090/l20, only required when platform==cluster)"
+    echo "usage: train_habitat_sim_mmae.sh model_size(small/large) pose_emb_type(cosine/curope) platform(local/cluster) gpu_type(4090/l20, only required when platform==cluster)"
     exit
 fi
 
 model_size=$1
 pose_emb_type=$2
-batchsize_per_gpu=64
+batchsize_per_gpu=64  # 更小的batch?
 max_epoch=300
 sche_epoch=600
 warmup_epochs=30
@@ -20,12 +20,12 @@ num_gpu=8
 memory=388
 datasets=habitat_release
 data_dir=../data/habitat-sim-data
-output_dir="exp/origin-habitat_sim-CroCo_${model_size}-${pose_emb_type}_blr-1e-4"
+output_dir="exp/mmae-habitat_sim-CroCo_${model_size}-${pose_emb_type}_blr-1e-4"
 
 if [[ "$model_size" == small ]]; then
-    model="CroCoNet("
+    model="MMAE_CroCoNet("
 elif [[ "$model_size" == large ]]; then
-    model="CroCoNet(enc_embed_dim=1024, enc_depth=24, enc_num_heads=16, dec_embed_dim=768, dec_num_heads=12, dec_depth=12"
+    model="MMAE_CroCoNet(enc_embed_dim=1024, enc_depth=24, enc_num_heads=16, dec_embed_dim=768, dec_num_heads=12, dec_depth=12"
 else
     echo "Not implemented model size: $model"
     exit
@@ -46,9 +46,9 @@ model="$model)"
 
 mkdir -p $output_dir
 
-echo "torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
+echo "torchrun --nproc_per_node=$num_gpu pretrain_mmae.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                  --batch_size $batchsize_per_gpu \
-                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq  \
+                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
                  --seed $seed --blr $blr --num_workers $num_dataloader_workers"
 
 platform=$3
@@ -58,13 +58,13 @@ if [[ "$platform" == "cluster" ]]; then
     link_config="datasets.link_config.link_config"
     link_name="train"
     tlaunch --gpu=$num_gpu --cpu=$num_cpu --memory=$memory --positive-tag=$gpu_type -- \
-        torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
+        torchrun --nproc_per_node=$num_gpu pretrain_mmae.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                  --batch_size $batchsize_per_gpu \
                  --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
                  --link_config $link_config --link_name $link_name \
                  --seed $seed --blr $blr --num_workers $num_dataloader_workers
 else
-    torchrun --nproc_per_node=$num_gpu pretrain.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
+    torchrun --nproc_per_node=$num_gpu pretrain_mmae.py --model "\"$model\"" --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
                 --batch_size $batchsize_per_gpu \
                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
                 --seed $seed --blr $blr --num_workers $num_dataloader_workers

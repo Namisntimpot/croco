@@ -3,6 +3,8 @@ model:
   pretrain_type: croco
   kwargs: configs/croco_small_model_args.yaml
   pretrained_ckpt: exp/origin-habitat_sim-CroCo_small-curope/checkpoint-49.pth
+  override_kwargs:
+    softmax_attn_map: false
 
 data:
   img_size: [240, 240]  # h*w
