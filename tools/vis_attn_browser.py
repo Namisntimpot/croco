@@ -1,4 +1,5 @@
 # vis_attn_browser_final.py
+import os
 import argparse
 import numpy as np
 from pathlib import Path
@@ -11,13 +12,25 @@ from bokeh.models import (ColumnDataSource, CustomJS, LinearColorMapper, HoverTo
                           Select, Div)
 from bokeh.palettes import Viridis256
 
+try:
+    from tools.utils import load_image_as_rgba, softmax, flip_attn_map
+except:
+    from utils import load_image_as_rgba, softmax, flip_attn_map
+
+'''
+左边应该是target_image，但bokeh对象命名为了source或src，只是加载的是target_image
+右边应该是source_image，但bokeh对象命名为了target或trg，只是加载的是source_image...
+'''
+
 # --- 1. 参数解析与文件扫描 ---
 parser = argparse.ArgumentParser(description="Attention Map 浏览器")
-parser.add_argument("--directory", type=str, required=True, help="包含.npy数据文件的目录路径")
+parser.add_argument("-d", "--directory", type=str, required=True, help="包含.npy数据文件的目录路径")
+parser.add_argument("-t", "--temperature", type=float, default=0.02)
 args = parser.parse_args()
 
-data_dir = Path(args.directory)
-npy_files = sorted([p.name for p in data_dir.glob("*.npy")])
+# data_dir = Path(args.directory)
+data_dir = args.directory
+npy_files = sorted([os.path.basename(p) for p in megfile.smart_glob(os.path.join(data_dir, '*.npy'))])
 
 if not npy_files:
     error_div = Div(text=f"<h3>错误：在目录 '{data_dir}' 中没有找到任何 .npy 文件。</h3>")
@@ -25,13 +38,7 @@ if not npy_files:
 else:
     # --- global ---
     similarity_array = None
-
-    def load_image_as_rgba(path):
-        '''load image and convert to RGBA, and then flip it vertically'''
-        with megfile.smart_open(path, 'rb') as f:
-            img = Image.open(f).convert("RGBA")
-            img_np = np.array(img).copy().view(np.uint32).reshape(img.height, img.width)
-        return np.flipud(img_np)
+    temp = args.temperature
 
     # --- 2. create Bokeh components and data sources ---
     file_selector = Select(title="select Attention Map file:", value=npy_files[0], options=npy_files)
@@ -75,20 +82,24 @@ else:
 
     # --- 4. 核心回调函数 ---
     def update_visualization(filepath):
-        # ... (此函数无变化)
         global similarity_array
         try:
-            info_div.text = f"<b>Loading:</b> {filepath.name}"
-            data = np.load(filepath, allow_pickle=True).item()
+            name = os.path.basename(filepath)
+            info_div.text = f"<b>Loading:</b> {os.path.basename(filepath)}"
+            with megfile.smart_open(filepath, 'rb') as f:
+                data = np.load(f, allow_pickle=True).tolist()
             src_img_path, trg_img_path = data["source_path"], data["target_path"]
             similarity_array = data["attn_map"]
-            src_img = load_image_as_rgba(src_img_path)
-            trg_img = load_image_as_rgba(trg_img_path)
+            similarity_array = flip_attn_map(similarity_array)
+            h = data['h'] if 'h' in data else None
+            w = data['w'] if 'w' in data else None
+            src_img = load_image_as_rgba(src_img_path, h, w)
+            trg_img = load_image_as_rgba(trg_img_path, h, w)
             H, W = src_img.shape
             h, w = similarity_array.shape[0:2]
             patch_size_h, patch_size_w = H / h, W / w
-            src_source.data = {'image': [src_img]}
-            trg_source.data = {'image': [trg_img]}
+            src_source.data = {'image': [trg_img]}
+            trg_source.data = {'image': [src_img]}
             p_src.x_range.end, p_src.y_range.end = W, H
             p_trg.x_range.end, p_trg.y_range.end = W, H
             p_src.title.text = f"source image: {Path(src_img_path).name}"
@@ -101,11 +112,12 @@ else:
             heatmap_source.data['x'], heatmap_source.data['y'] = patch_x, patch_y
             heatmap_renderer.glyph.width, heatmap_renderer.glyph.height = patch_size_w, patch_size_h
             update_heatmap(None, None, {'x': [0], 'y': [0]})
-            info_div.text = f"<b>Selected file:</b> {filepath.name}<br><b>resolution:</b> {W}x{H}"
+            info_div.text = f"<b>Selected file:</b> {name}<br><b>resolution:</b> {W}x{H}"
         except Exception as e:
-            info_div.text = f"<b>Error when loading .npy file:</b> {filepath.name}<br><pre>{e}</pre>"
+            info_div.text = f"<b>Error when loading .npy file:</b> {name}<br><pre>{e}</pre>"
 
     def update_heatmap(attr, old, new):
+        global temp
         if not new.get('x') or similarity_array is None: return
         H, W = p_src.y_range.end, p_src.x_range.end
         h, w = similarity_array.shape[0:2]
@@ -122,13 +134,17 @@ else:
 
         # update heatmap and the red point on the target image
         new_similarity = similarity_array[i, j, :, :].flatten()
+        if temp > 0:
+            new_similarity = softmax(new_similarity / temp)
+        else:
+            new_similarity = (new_similarity - new_similarity.min()) / (new_similarity.max() - new_similarity.min())
         heatmap_source.data['similarity'] = new_similarity
         max_idx = np.argmax(new_similarity)
         patch_x, patch_y = heatmap_source.data['x'], heatmap_source.data['y']
         max_point_source.data = {'x': [patch_x[max_idx]], 'y': [patch_y[max_idx]]}
     
     def on_file_select(attr, old, new):
-        update_visualization(data_dir / new)
+        update_visualization(os.path.join(data_dir, new))
 
     # --- 5. bind callbacks. layouts ---
     file_selector.on_change('value', on_file_select)
@@ -140,4 +156,4 @@ else:
     curdoc().title = "Attention Map Browser"
     
     # --- 6. initialize. ---
-    update_visualization(data_dir / npy_files[0])
+    update_visualization(os.path.join(data_dir, npy_files[0]))

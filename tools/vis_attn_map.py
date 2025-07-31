@@ -7,17 +7,15 @@ import argparse
 import megfile
 from PIL import Image
 
-# ============================ 修正点 1: 图像加载与处理 ============================
-def load_image_for_bokeh(p):
-    """
-    加载图片，转换为RGBA格式，并进行垂直翻转以适配Bokeh的坐标系。
-    """
-    with megfile.smart_open(p, 'rb') as f:
-        img = Image.open(f).convert("RGBA") # 转换为4通道RGBA
-        img_np = np.array(img).view(np.uint32).reshape(img.height, img.width)
-    # 垂直翻转图像以匹配Bokeh的坐标系 (原点在左下)
-    return np.flipud(img_np)
-# ==============================================================================
+try:
+    from tools.utils import load_image_as_rgba as load_image_for_bokeh, softmax, flip_attn_map
+except:
+    from utils import load_image_as_rgba as load_image_for_bokeh, softmax, flip_attn_map
+
+'''
+左边应该是target_image，但bokeh对象命名为了source或src，只是加载的是target_image
+右边应该是source_image，但bokeh对象命名为了target或trg，只是加载的是source_image...
+'''
 
 def parse_patch_size(attn_map: np.ndarray, ori_h: int, ori_w: int):
     h = attn_map.shape[0]
@@ -26,9 +24,11 @@ def parse_patch_size(attn_map: np.ndarray, ori_h: int, ori_w: int):
 # --- 0. 解析命令行参数 ---
 parser = argparse.ArgumentParser()
 parser.add_argument("-f", "--file", type=str, required=True, help="path to the attention map file.")
+parser.add_argument("-t", "--temperature", type=float, default=0.02)
 args = parser.parse_args()
 
 # --- 1. 加载数据 ---
+temp = args.temperature
 attn_map_file = args.file
 with megfile.smart_open(attn_map_file, 'rb') as f:
     data = np.load(f, allow_pickle=True).item() # .item() 更安全
@@ -36,6 +36,8 @@ with megfile.smart_open(attn_map_file, 'rb') as f:
 source_path = data['source_path']
 target_path = data['target_path']
 similarity_array: np.ndarray = data['attn_map']
+similarity_array = flip_attn_map(similarity_array)
+h, w = data['h'] if 'h' in data else None, data['w'] if 'w' in data else None
 
 # 使用修正后的函数加载图像
 src_image_data = load_image_for_bokeh(source_path)
@@ -46,8 +48,8 @@ patch_size = parse_patch_size(similarity_array, H, W)
 h, w = H // patch_size, W // patch_size
 
 # --- 2. 设置数据源 ---
-src_source = ColumnDataSource(data=dict(image=[src_image_data]))
-trg_source = ColumnDataSource(data=dict(image=[trg_image_data]))
+src_source = ColumnDataSource(data=dict(image=[trg_image_data]))
+trg_source = ColumnDataSource(data=dict(image=[src_image_data]))
 
 patch_x = np.tile(np.arange(w) * patch_size + patch_size / 2, h)
 patch_y = np.repeat(np.arange(h) * patch_size + patch_size / 2, w)
@@ -90,7 +92,7 @@ p_trg.rect(x='x', y='y', width=patch_size, height=patch_size,
            fill_alpha=0.5, line_color=None, source=heatmap_source)
 p_trg.circle(x='x', y='y', size=10, color='red', source=max_point_source)
 # p_trg.add_layout(p_trg.legend[0], 'right')
-# p_trg.legend.click_policy = "hide"
+# p_trg.legend.click_policy = "hide"AP
 
 
 # --- 4. 交互与回调 ---
@@ -113,6 +115,10 @@ def update_heatmap(attr, old, new):
     # ==============================================================================
 
     new_similarity = similarity_array[i, j, :, :].flatten()
+    if temp > 0:
+        new_similarity = softmax(new_similarity / temp)
+    else:
+        new_similarity = (new_similarity - new_similarity.min()) / (new_similarity.max() - new_similarity.min())
     heatmap_source.data['similarity'] = new_similarity
     
     max_idx = np.argmax(new_similarity)
