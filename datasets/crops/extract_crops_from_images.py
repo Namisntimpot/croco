@@ -45,7 +45,7 @@ def main(args):
     call = functools.partial(save_image_crops, args)
 
     print(f"Generating cropped images to {args.output_dir} ...")
-    with open(listing_path, 'w') as listing:
+    with open(listing_path, 'a') as listing:
         listing.write('# pair_path\n')
         for results in tqdm(mmap(call, jobs), total=len(jobs)):
             for path in results:
