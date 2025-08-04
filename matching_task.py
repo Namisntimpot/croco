@@ -56,7 +56,11 @@ def parse_args():
         config.model.kwargs['softmax_attn_map'] = args.softmax_attn_map
     config.inference.reciprocity = args.reciprocity if args.reciprocity is not None else config.inference.reciprocity
     config.inference.suppress_1st_token = args.suppress_1st_token if args.suppress_1st_token is not None else config.inference.suppress_1st_token
-    config.inference.attn_layers_adopted = args.attn_layers_adopted.split(",") if args.attn_layers_adopted is not None else config.inference.attn_layers_adopted
+    if args.attn_layers_adopted is not None:
+        attn_layers_adopted = args.attn_layers_adopted.split(",")
+        attn_layers_adopted = [int(l) for l in attn_layers_adopted]
+        config.inference.attn_layers_adopted = attn_layers_adopted
+        print("adopted decoder layers: ", attn_layers_adopted)
     config.inference.temperature = args.temperature if args.temperature is not None else config.inference.temperature
     config.data.img_size = (args.img_h, args.img_w) if args.img_h is not None and args.img_w is not None else config.data.img_size
     args.config = config

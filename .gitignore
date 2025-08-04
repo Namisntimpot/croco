@@ -3,3 +3,5 @@ __pycache__
 /exp
 /nori_logs
 /serve_logs
+/exp_matching
+/error.txt
