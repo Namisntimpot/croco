@@ -1,0 +1,18 @@
+name: croco_new_arch_small
+model:
+  task: pretrain
+  pretrain_type: mmae_new_arch
+  img_size: 224
+  kwargs: 
+    mask_ratio: 0.8
+    enc_depth_self_attn: 8
+    enc_depth_cros_attn: 8
+    enc_dim: 768
+    enc_num_heads: 12
+    dec_depth: 8
+    dec_dim: 512
+    dec_num_heads: 16
+    mlp_ratio: 4
+    norm_layer: layer_norm
+    pos_embd: RoPE100
+    get_attn_weight: False
