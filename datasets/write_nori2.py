@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument("--pairs_per_run", type=int, default=100)
     parser.add_argument("--num_workers", type=int, default=1)
     parser.add_argument("--memory", type=int, default=4, help="in GB")
-    parser.add_argument("--log_dir", type=str, default=None)
+    parser.add_argument("--log_dir", type=str, default="nori_logs")
     args = parser.parse_args()
     return args
 
