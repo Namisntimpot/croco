@@ -220,7 +220,11 @@ class AttentionLayer(nn.Module):
         self.attn_func = mem_efficient_attn if not get_attn_weight else manual_attn
         self.attn_drop = attn_drop
 
-        self.use_qkv_layer = not self.cross_attn or self.reciprocal
+        # self.use_qkv_layer = (not self.cross_attn) or self.reciprocal
+        self.use_qkv_layer = (not self.cross_attn)  
+        # CuRoPE is an inplace operation. If it's a symmetric cross-attention layer (i.e., it needs to compute both cross_attn(q1,k2,v2) and cross_attn(q2,k1,v1)
+        # simultaneously), using a single QKV linear layer without splitting it will cause the backward pass to fail due to the inplace operation!!
+
         if self.use_qkv_layer:
             self.qkv = nn.Linear(dim, dim*3, bias=qkv_bias)
         else:
@@ -231,15 +235,17 @@ class AttentionLayer(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
         self.proj_norm = parse_norm_layer_1d(norm_layer, dim)
 
-    def _x_to_qkv(self, x):
+    def _x_to_qkv(self, x, q:bool=True, k:bool=True, v:bool=True):
+        '''When self.use_qkv_layer is False, q, k and v are used to specify whther this x is Q, K or V.'''
         B,N,C = x.shape
         if self.use_qkv_layer:
-            qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).premute(2,0,1,3,4) # 3,B,N,H,D
-            q, k, v = qkv.unbind(0)
+            qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2,0,1,3,4).contiguous() # 3,B,N,H,D
+            # q, k, v = qkv.unbind(0)  # it will Cause curope to crash 
+            q, k, v = [qkv[i] for i in range(3)]
         else:
-            q = self.projq(q).reshape(B, N, self.num_heads, C // self.num_heads)
-            k = self.projk(k).reshape(B, N, self.num_heads, C // self.num_heads)
-            v = self.projv(v).reshape(B, N, self.num_heads, C // self.num_heads)
+            q = self.projq(x).reshape(B, N, self.num_heads, C // self.num_heads) if q else None
+            k = self.projk(x).reshape(B, N, self.num_heads, C // self.num_heads) if k else None
+            v = self.projv(x).reshape(B, N, self.num_heads, C // self.num_heads) if v else None
         return q, k, v
     
     def _post_attn_proj(self, x):
@@ -256,13 +262,14 @@ class AttentionLayer(nn.Module):
         attn_drop = self.attn_drop if self.training else 0.
         x2_input = x2 is not None
 
-        q1, k1, v1 = self._x_to_qkv(x1)
-        if x2 is not None:
-            q2, k2, v2 = self._x_to_qkv(x2)
-        else:
-            q2 = k2 = v2 = None
         if not self.cross_attn:
+            q1, k1, v1 = self._x_to_qkv(x1)
+            if x2 is not None:
+                q2, k2, v2 = self._x_to_qkv(x2)
+            else:
+                q2 = k2 = v2 = None
             attn_weight1 = None
+
             x1 = self.attn_func(
                 q1, k1, v1, self.scale, attn_drop, self.rope_func, pos1, None, None, self.get_attn_weight
             )
@@ -278,6 +285,12 @@ class AttentionLayer(nn.Module):
                     x2, attn_weight2 = x2
                 x2 = self._post_attn_proj(x2)
         else:
+            if self.reciprocal:
+                q1, k1, v1 = self._x_to_qkv(x1)
+                q2, k2, v2 = self._x_to_qkv(x2)
+            else:
+                q1, _, _ = self._x_to_qkv(x1, True, False, False)
+                _, k2, v2 = self._x_to_qkv(x2, False, True, True)
             attn_weight1 = attn_weight2 = None
             x1 = self.attn_func(
                 q1, k2, v2, self.scale, attn_drop, self.rope_func, pos1, pos2, None, self.get_attn_weight
@@ -305,8 +318,9 @@ if __name__ == '__main__':
     from models.curope import cuRoPE2D as RoPE2D
     from models.blocks import PositionGetter
 
-    test_time = True
+    test_time = False
     test_correctness = True
+    bf16 = True
 
     warmup = 100
     run = 100
@@ -330,153 +344,159 @@ if __name__ == '__main__':
     pos = pos_getter(B, h // patch_size, w // patch_size, img1_tokens.device)
 
     ###################################################################
-    if test_time:
-        print("manual attention, separate self-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            start = time.time()
-            x1 = manual_attn_unified(img1_tokens, img1_tokens, img1_tokens, scale, False, False, 0., rope, pos, pos, False)
-            x2 = manual_attn_unified(img2_tokens, img2_tokens, img2_tokens, scale, False, False, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+    print("auto cast bf16: ", bf16)
+    with torch.autocast('cuda', enabled=bf16):
+        if test_time:
+            print("manual attention, separate self-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                start = time.time()
+                x1 = manual_attn_unified(img1_tokens, img1_tokens, img1_tokens, scale, False, False, 0., rope, pos, pos, False)
+                x2 = manual_attn_unified(img2_tokens, img2_tokens, img2_tokens, scale, False, False, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("manual attention, separate cross-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            start = time.time()
-            x1 = manual_attn_unified(img1_tokens, img2_tokens, img2_tokens, scale, False, True, 0., rope, pos, pos, False)
-            x2 = manual_attn_unified(img2_tokens, img1_tokens, img1_tokens, scale, False, True, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("manual attention, separate cross-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                start = time.time()
+                x1 = manual_attn_unified(img1_tokens, img2_tokens, img2_tokens, scale, False, True, 0., rope, pos, pos, False)
+                x2 = manual_attn_unified(img2_tokens, img1_tokens, img1_tokens, scale, False, True, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("manual attention, union self-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
-            start = time.time()
-            x1 = manual_attn_unified(qkv, qkv, qkv, scale, True, False, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("manual attention, union self-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
+                start = time.time()
+                x1 = manual_attn_unified(qkv, qkv, qkv, scale, True, False, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("manual attention, union cross-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
-            start = time.time()
-            x1 = manual_attn_unified(qkv, qkv, qkv, scale, True, True, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("manual attention, union cross-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
+                start = time.time()
+                x1 = manual_attn_unified(qkv, qkv, qkv, scale, True, True, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("xformers attention, separate self-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            start = time.time()
-            x1 = mem_efficient_attn_unified(img1_tokens, img1_tokens, img1_tokens, scale, False, False, 0., rope, pos, pos, False)
-            x2 = mem_efficient_attn_unified(img2_tokens, img2_tokens, img2_tokens, scale, False, False, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("xformers attention, separate self-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                start = time.time()
+                x1 = mem_efficient_attn_unified(img1_tokens, img1_tokens, img1_tokens, scale, False, False, 0., rope, pos, pos, False)
+                x2 = mem_efficient_attn_unified(img2_tokens, img2_tokens, img2_tokens, scale, False, False, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("xformers attention, separate cross-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            start = time.time()
-            x1 = mem_efficient_attn_unified(img1_tokens, img2_tokens, img2_tokens, scale, False, True, 0., rope, pos, pos, False)
-            x2 = mem_efficient_attn_unified(img2_tokens, img1_tokens, img1_tokens, scale, False, True, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("xformers attention, separate cross-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                start = time.time()
+                x1 = mem_efficient_attn_unified(img1_tokens, img2_tokens, img2_tokens, scale, False, True, 0., rope, pos, pos, False)
+                x2 = mem_efficient_attn_unified(img2_tokens, img1_tokens, img1_tokens, scale, False, True, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("xformers attention, union self-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
-            start = time.time()
-            x1 = mem_efficient_attn_unified(qkv, qkv, qkv, scale, True, False, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("xformers attention, union self-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
+                start = time.time()
+                x1 = mem_efficient_attn_unified(qkv, qkv, qkv, scale, True, False, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("xformers attention, union cross-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
-            start = time.time()
-            x1 = mem_efficient_attn_unified(qkv, qkv, qkv, scale, True, True, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("xformers attention, union cross-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
+                start = time.time()
+                x1 = mem_efficient_attn_unified(qkv, qkv, qkv, scale, True, True, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-        print("xformers attention, union rotate Q cross-attention.")
-        cnt = 0
-        t = 0
-        for i in tqdm(range(warmup + run)):
-            qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
-            start = time.time()
-            x1 = mem_efficient_attn_unified_rotateQ(qkv, qkv, qkv, scale, True, True, 0., rope, pos, pos, False)
-            if i >= warmup:
-                t += (time.time() - start)
-                cnt += 1
-        print("time: ", t / cnt)
-        print(x1.shape)
+            print("xformers attention, union rotate Q cross-attention.")
+            cnt = 0
+            t = 0
+            for i in tqdm(range(warmup + run)):
+                qkv = torch.cat([img1_tokens, img2_tokens], dim=1).contiguous()
+                start = time.time()
+                x1 = mem_efficient_attn_unified_rotateQ(qkv, qkv, qkv, scale, True, True, 0., rope, pos, pos, False)
+                if i >= warmup:
+                    t += (time.time() - start)
+                    cnt += 1
+            print("time: ", t / cnt)
+            print(x1.shape)
 
-    ###################################################################
-    if test_correctness:
-        # with torch.autocast('cuda', torch.bfloat16):
-            # NOTE: cuRoPE is a inplace operation!
-            img1_origin = img1_tokens.clone()
-            img2_origin = img2_tokens.clone()
-            manual_x1_self = manual_attn(img1_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
-            manual_x2_self = manual_attn(img2_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
-            img1_tokens = img1_origin.clone()
-            img2_tokens = img2_origin.clone()
-            xformer_x1_self = mem_efficient_attn(img1_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
-            img1_tokens = img1_origin.clone()
-            img2_tokens = img2_origin.clone()
-            xformer_x2_self = mem_efficient_attn(img2_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
-            img1_tokens = img1_origin.clone()
-            img2_tokens = img2_origin.clone()
+        ###################################################################
+        if test_correctness:
+            # with torch.autocast('cuda', torch.bfloat16):
+                # NOTE: cuRoPE is a inplace operation!
+                if bf16:
+                    img1_tokens = img1_tokens.to(torch.bfloat16)
+                    img2_tokens = img2_tokens.to(torch.bfloat16)
 
-            manual_x1_cross = manual_attn(img1_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
-            img1_tokens = img1_origin.clone()
-            img2_tokens = img2_origin.clone()
-            manual_x2_cross = manual_attn(img2_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
-            img1_tokens = img1_origin.clone()
-            img2_tokens = img2_origin.clone()
-            xformer_x1_cross = mem_efficient_attn(img1_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
-            img1_tokens = img1_origin.clone()
-            img2_tokens = img2_origin.clone()
-            xformer_x2_cross = mem_efficient_attn(img2_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
-            
-            print(f"manual_x1_self - xformer_x1_self: {torch.mean(torch.abs(manual_x1_self - xformer_x1_self))}")
-            print(f"manual_x2_self - xformer_x2_self: {torch.mean(torch.abs(manual_x2_self - xformer_x2_self))}")
-            print(f"manual_x1_cross - xformer_x1_cross: {torch.mean(torch.abs(manual_x1_cross - xformer_x1_cross))}")
-            print(f"manual_x2_cross - xformer_x2_cross: {torch.mean(torch.abs(manual_x2_cross - xformer_x2_cross))}")
+                img1_origin = img1_tokens.clone()
+                img2_origin = img2_tokens.clone()
+                manual_x1_self = manual_attn(img1_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
+                manual_x2_self = manual_attn(img2_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
+                img1_tokens = img1_origin.clone()
+                img2_tokens = img2_origin.clone()
+                xformer_x1_self = mem_efficient_attn(img1_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
+                img1_tokens = img1_origin.clone()
+                img2_tokens = img2_origin.clone()
+                xformer_x2_self = mem_efficient_attn(img2_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
+                img1_tokens = img1_origin.clone()
+                img2_tokens = img2_origin.clone()
+
+                manual_x1_cross = manual_attn(img1_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
+                img1_tokens = img1_origin.clone()
+                img2_tokens = img2_origin.clone()
+                manual_x2_cross = manual_attn(img2_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
+                img1_tokens = img1_origin.clone()
+                img2_tokens = img2_origin.clone()
+                xformer_x1_cross = mem_efficient_attn(img1_tokens, img2_tokens, img2_tokens, scale, 0, rope, pos, pos, None, False)
+                img1_tokens = img1_origin.clone()
+                img2_tokens = img2_origin.clone()
+                xformer_x2_cross = mem_efficient_attn(img2_tokens, img1_tokens, img1_tokens, scale, 0, rope, pos, pos, None, False)
+                
+                print(f"manual_x1_self - xformer_x1_self: {torch.mean(torch.abs(manual_x1_self - xformer_x1_self))}")
+                print(f"manual_x2_self - xformer_x2_self: {torch.mean(torch.abs(manual_x2_self - xformer_x2_self))}")
+                print(f"manual_x1_cross - xformer_x1_cross: {torch.mean(torch.abs(manual_x1_cross - xformer_x1_cross))}")
+                print(f"manual_x2_cross - xformer_x2_cross: {torch.mean(torch.abs(manual_x2_cross - xformer_x2_cross))}")

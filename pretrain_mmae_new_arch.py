@@ -223,6 +223,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         if data_iter_step % accum_iter == 0:
             misc.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
 
+        # with torch.autograd.set_detect_anomaly(True):
         image1 = image1.to(device, non_blocking=True) 
         image2 = image2.to(device, non_blocking=True)
         # with torch.cuda.amp.autocast(enabled=bool(args.amp)):

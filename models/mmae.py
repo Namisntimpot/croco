@@ -100,6 +100,8 @@ class MMAEViT(nn.Module):
         self.in_channels = 3
         self.prediction_head = nn.Linear(dec_dim, patch_size**2 * self.in_channels, bias=True)
 
+        self.initialize_weights()
+
 
     def _set_cross_attn_encoder(self, enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, norm_layer, rope, get_attn_weight):
         # for overriding.
@@ -176,7 +178,7 @@ class MMAEViT(nn.Module):
         if do_mask1:
             masks1 = self.mask_generator(x1)  # B,N
             x1 = x1[~masks1].view(B, -1, C)
-            posvis1 = pos1[~masks1].view(B, -1, 2)
+            posvis1 = pos1[~masks1].view(B, -1, 2).contiguous()
         else:
             B,N,C = x1.size()
             masks1 = torch.zeros((B,N), dtype=bool)
@@ -184,7 +186,7 @@ class MMAEViT(nn.Module):
         if do_mask2:
             masks2 = self.mask_generator(x2)
             x2 = x2[~masks2].view(B, -1, C)
-            posvis2 = pos2[~masks2].view(B, -1, 2)
+            posvis2 = pos2[~masks2].view(B, -1, 2).contiguous()
         else:
             B,N,C = x2.size()
             masks2 = torch.zeros((B, N), dtype=bool)

@@ -38,9 +38,9 @@ def patchify(imgs, p):
 
     h = imgs.shape[2] // p[0]
     w = imgs.shape[3] // p[1]
-    x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+    x = imgs.reshape(shape=(imgs.shape[0], 3, h, p[0], w, p[1]))
     x = torch.einsum('nchpwq->nhwpqc', x)
-    x = x.reshape(shape=(imgs.shape[0], h * w, p**2 * 3))
+    x = x.reshape(shape=(imgs.shape[0], h * w, p[0] * p[1] * 3))
     return x
 
 def unpatchify(x, p, ori_reso):
@@ -59,5 +59,5 @@ def unpatchify(x, p, ori_reso):
     
     x = x.reshape(shape=(x.shape[0], num_patches_h, num_patches_w, p[0], p[1], 3))
     x = torch.einsum('nhwpqc->nchpwq', x)
-    imgs = x.reshape(shape=(x.shape[0], 3, num_patches_h * p, num_patches_w * p))
+    imgs = x.reshape(shape=(x.shape[0], 3, num_patches_h * p[0], num_patches_w * p[1]))
     return imgs

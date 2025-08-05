@@ -12,9 +12,10 @@ sche_epoch=100
 warmup_epochs=5
 keep_freq=5
 
+num_workers=8
 num_gpu=4
 num_cpu=10
-memory=128
+memory=160
 datasets=habitat_release
 data_dir=../data/habitat-sim-data
 output_dir="exp/mmae_newarch-small-habitat_sim-mask_0.8"
@@ -33,11 +34,11 @@ if [[ "$platform" == "cluster" ]]; then
     link_name="train"
     tlaunch --gpu=$num_gpu --cpu=$num_cpu --memory=$memory --positive-tag=$gpu_type -- \
         torchrun --nproc_per_node=$num_gpu pretrain_mmae_new_arch.py -cfg $config_path --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
-                 --batch_size $batchsize_per_gpu \
+                 --batch_size $batchsize_per_gpu --num_workers $num_workers \
                  --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq \
                  --link_config $link_config --link_name $link_name
 else
     torchrun --nproc_per_node=$num_gpu pretrain_mmae_new_arch.py -cfg $config_path --dataset $datasets --output_dir $output_dir --data_dir $data_dir \
-                --batch_size $batchsize_per_gpu \
+                --batch_size $batchsize_per_gpu --num_workers $num_workers \
                 --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq
 fi
