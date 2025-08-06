@@ -24,6 +24,12 @@ class SelfAttnBlock(nn.Module):
             norm_layer: str = 'none',
             rope_func = None,
             get_attn_weight = False,
+            # gate.
+            gate = False,
+            gate_type = 'cond_per_head',
+            vga = True,
+            gate_mlp_ratio = 0.25,
+            gate_by_all_feat = False,
     ) -> None:
         """Initialize Block.
 
@@ -47,7 +53,8 @@ class SelfAttnBlock(nn.Module):
         self.norm1 = parse_norm_layer_1d(norm_layer, dim)
         self.get_attn_weight = get_attn_weight
         self.attn = AttentionLayer(dim, num_heads, rope_func, get_attn_weight,
-                                   False, False, qkv_bias, attn_drop, proj_bias, proj_drop, norm_layer)
+                                   False, False, qkv_bias, attn_drop, proj_bias, proj_drop, norm_layer,
+                                   gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = parse_norm_layer_1d(norm_layer, dim)
         self.mlp = Mlp(
@@ -93,6 +100,12 @@ class CrossAttnBlock(nn.Module):
             rope_func = None,
             get_attn_weight = False,
             reciprocal = True,
+            # gate
+            gate = False,
+            gate_type = 'cond_per_head',
+            vga = True,
+            gate_mlp_ratio = 0.25,
+            gate_by_all_feat = False,
         ):
         '''
         self-attn -> cross-attn -> proj  
@@ -107,14 +120,16 @@ class CrossAttnBlock(nn.Module):
 
         self.norm1 = parse_norm_layer_1d(norm_layer, dim)
         self.self_attn = AttentionLayer(dim, num_heads, rope_func, False,
-                                        False, False, qkv_bias, attn_drop, proj_bias, proj_drop, norm_layer)
+                                        False, False, qkv_bias, attn_drop, proj_bias, proj_drop, norm_layer,
+                                        gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.norm2 = parse_norm_layer_1d(norm_layer, dim)
         self.get_attn_weight = get_attn_weight
         self.reciprocal = reciprocal
         self.cross_attn = AttentionLayer(dim, num_heads, rope_func, get_attn_weight,
-                                   True, reciprocal, qkv_bias, attn_drop, proj_bias, proj_drop, norm_layer)
+                                   True, reciprocal, qkv_bias, attn_drop, proj_bias, proj_drop, norm_layer,
+                                   gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.norm3 = parse_norm_layer_1d(norm_layer, dim)
@@ -180,6 +195,12 @@ class SelfAttnViT(nn.Module):
             norm_layer: str = 'none',
             rope_func = None,
             get_attn_weight = False,
+            # VGA
+            gate = False,
+            gate_type = 'cond_per_head',
+            vga = True,
+            gate_mlp_ratio = 0.25,
+            gate_by_all_feat = False,
     ):
         super().__init__()
         self.depth = depth
@@ -187,7 +208,8 @@ class SelfAttnViT(nn.Module):
         self.blocks = nn.ModuleList(
             [
                 SelfAttnBlock(dim, num_heads, mlp_ratio, qkv_bias, proj_bias,
-                              proj_drop, attn_drop, drop_path, norm_layer, rope_func, get_attn_weight)
+                              proj_drop, attn_drop, drop_path, norm_layer, rope_func, get_attn_weight,
+                              gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
                 for i in range(depth)
             ]
         )
@@ -284,6 +306,12 @@ class CrossAttnViT(nn.Module):
             rope_func = None,
             get_attn_weight = False,
             reciprocal = True,
+            # vga
+            gate = False,
+            gate_type = 'cond_per_head',
+            vga = True,
+            gate_mlp_ratio = 0.25,
+            gate_by_all_feat = False,
         ):
         '''
         when reciprocal: x2 will only function as K, V and it will remain unchanged. And only attn_weight1 is meaningful  
@@ -295,7 +323,8 @@ class CrossAttnViT(nn.Module):
         self.blocks = nn.ModuleList(
             [
                 CrossAttnBlock(dim, num_heads, mlp_ratio, qkv_bias, proj_bias, proj_drop, attn_drop, 
-                               drop_path, norm_layer, rope_func, get_attn_weight, reciprocal)
+                               drop_path, norm_layer, rope_func, get_attn_weight, reciprocal,
+                               gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
                 for i in range(depth)
             ]
         )
