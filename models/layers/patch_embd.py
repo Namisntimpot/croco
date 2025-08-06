@@ -8,7 +8,11 @@ class PositionGetter(object):
 
     def __init__(self):
         self.cache_positions = {}
-        
+    
+    @staticmethod
+    def zero_postitions(batch_size, num_tokens, device):
+        return torch.zeros(batch_size, num_tokens, 2, device=device)
+
     def __call__(self, b, h, w, device):
         if not (h,w) in self.cache_positions:
             x = torch.arange(w, device=device)

@@ -53,6 +53,10 @@ class MMAEViT(nn.Module):
             norm_layer:str = 'layer_norm',
             pos_embd:str = 'RoPE100',  # here we only support RoPE, deprecating cosine, as RoPE performs much better than cosine
             get_attn_weight: bool = False,
+            # REG
+            num_reg_tokens = 0,
+            dec_with_reg = False,  # deprecate register tokens before decoding.
+            # VGA
         ):
         super().__init__()
         self.img_size = to_2tuple(img_size)
@@ -96,6 +100,12 @@ class MMAEViT(nn.Module):
         # mask_token.
         self.mask_token = nn.Parameter(torch.zeros(1, 1, dec_dim))
 
+        # register_token
+        self.num_reg_tokens = num_reg_tokens
+        self.dec_with_reg = dec_with_reg
+        if self.num_reg_tokens > 0:
+            self.reg_tokens = nn.Parameter(torch.zeros(1, self.num_reg_tokens, enc_dim))
+
         # prediction_head
         self.in_channels = 3
         self.prediction_head = nn.Linear(dec_dim, patch_size**2 * self.in_channels, bias=True)
@@ -117,6 +127,8 @@ class MMAEViT(nn.Module):
 
         # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
         torch.nn.init.normal_(self.mask_token, std=.02)
+        if self.num_reg_tokens > 0:
+            torch.nn.init.normal_(self.reg_tokens, std=.02)
 
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
@@ -130,6 +142,19 @@ class MMAEViT(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+
+    def cat_register_tokens(self, reg_tokens, x, pos, posvis, mask):
+        b, nreg = reg_tokens.shape[:2]
+        reg_pos = PositionGetter.zero_postitions(b, nreg, x.device)
+        reg_mask = torch.zeros((b, nreg), dtype=bool)
+        x = torch.cat((reg_tokens, x), dim=1).contiguous()
+        pos = torch.cat((reg_pos, pos), dim=1).contiguous()
+        posvis = torch.cat((reg_pos, posvis), dim=1).contiguous()
+        mask = torch.cat((reg_mask, mask), dim=1).contiguous()
+        return x, pos, posvis, mask
+    
+    def exclude_register_tokens(self, x, pos, posvis, mask, attn_weight=None):
+        raise NotImplementedError
 
     def _encode_image(self, image1:torch.Tensor, image2:torch.Tensor, do_mask1=False, do_mask2=False, return_all_blocks = False):
         """
@@ -170,8 +195,6 @@ class MMAEViT(nn.Module):
         # and get position if each return patch (pos has size B x Npatches x 2)
         x1, pos1 = self.patch_embed(image1)
         x2, pos2 = self.patch_embed(image2)
-        
-        # TODO: Add register tokens...
 
         # apply masking 
         B,N,C = x1.size()
@@ -191,6 +214,16 @@ class MMAEViT(nn.Module):
             B,N,C = x2.size()
             masks2 = torch.zeros((B, N), dtype=bool)
             posvis2 = pos2
+
+        # add register tokens
+        if self.num_reg_tokens > 0:
+            reg_tokens = self.reg_tokens.expand(B, self.num_reg_tokens, -1)
+            x1, pos1, posvis1, masks1 = self.cat_register_tokens(
+                reg_tokens, x1, pos1, posvis1, masks1
+            )
+            x2, pos2, posvis2, masks2 = self.cat_register_tokens(
+                reg_tokens, x2, pos2, posvis2, masks2
+            )
         
         # now apply the transformer encoder and normalization   
         # self attention encoder
