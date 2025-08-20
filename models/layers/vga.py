@@ -115,6 +115,8 @@ class PerHeadMlp(nn.Module):
             else:
                 self.mlp = PerHeadLinear(n_heads, self.head_dim, 1, True)
 
+        self.forward_func = self.forward_common_linear if use_linear else self.forward_per_head_linear
+
     def forward_common_linear(self, x):
         '''x: b, n, h, d
         out: b, n, h, 1
@@ -137,10 +139,11 @@ class PerHeadMlp(nn.Module):
         '''x: b, n, h, d
         out: b, n, h, 1
         '''
-        if self.use_linear:
-            return self.forward_common_linear(x)
-        else:
-            return self.forward_per_head_linear(x)
+        self.forward_func(x)
+        # if self.use_linear:
+        #     return self.forward_common_linear(x)
+        # else:
+        #     return self.forward_per_head_linear(x)
 
 
 
