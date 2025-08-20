@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .utils import parse_norm_layer_1d
+from .vga import VGA
 
 # NOTE:
 # Although a unified self- and cross-attention implementation that applies attention operation to tokens of 2 images (concatenated into 1 tensor)
@@ -202,7 +203,9 @@ def mem_efficient_attn_unified_rotateQ(q:torch.Tensor, k:torch.Tensor, v:torch.T
 
 class AttentionLayer(nn.Module):
     def __init__(self, dim, num_heads=12, rope_func=None, get_attn_weight=False, cross_attn=False, reciprocal=False,
-                 qkv_bias=True, attn_drop=0., proj_bias=True, proj_drop=0., norm_layer=None):
+                 qkv_bias=True, attn_drop=0., proj_bias=True, proj_drop=0., norm_layer=None,
+                 # gate
+                 gate=False, gate_type='cond_per_head', vga=True, gate_mlp_ratio=0.25, gate_by_all_feat=False):
         '''
         cross_attn: if cross_attn, it is specified to be a cross-attention layer, and tokens of 2 input images should be inputted in forward pass.  
         reciprocal: it only takes effect when cross_attn==True. if reciprocal, it will calculate cross-attention alternatively on image1 and image2.
@@ -235,6 +238,14 @@ class AttentionLayer(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
         self.proj_norm = parse_norm_layer_1d(norm_layer, dim)
 
+        # gate
+        self.gate = gate
+        self.vga = vga
+        self.vga_module = VGA(
+            self.dim, self.num_heads, gate_type, gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
+        )
+
+
     def _x_to_qkv(self, x, q:bool=True, k:bool=True, v:bool=True):
         '''When self.use_qkv_layer is False, q, k and v are used to specify whther this x is Q, K or V.'''
         B,N,C = x.shape
@@ -262,6 +273,9 @@ class AttentionLayer(nn.Module):
         attn_drop = self.attn_drop if self.training else 0.
         x2_input = x2 is not None
 
+        x1_origin = x1
+        x2_origin = x2
+
         if not self.cross_attn:
             q1, k1, v1 = self._x_to_qkv(x1)
             if x2 is not None:
@@ -275,6 +289,11 @@ class AttentionLayer(nn.Module):
             )
             if self.get_attn_weight:
                 x1, attn_weight1 = x1
+            # gate
+            if self.gate:
+                x1 = self.vga_module.forward(v1 if self.vga else x1_origin, x1)
+            
+            # porjection after attn
             x1 = self._post_attn_proj(x1)
             if q2 is not None:
                 attn_weight2 = None
@@ -283,6 +302,10 @@ class AttentionLayer(nn.Module):
                 )
                 if self.get_attn_weight:
                     x2, attn_weight2 = x2
+                # gate
+                if self.gate:
+                    x2 = self.vga_module.forward(v2 if self.vga else x2_origin, x2)
+                # projection after attn
                 x2 = self._post_attn_proj(x2)
         else:
             if self.reciprocal:
@@ -297,6 +320,10 @@ class AttentionLayer(nn.Module):
             )
             if self.get_attn_weight:
                 x1, attn_weight1 = x1
+            # gate
+            if self.gate:
+                x1 = self.vga_module.forward(v2 if self.vga else x1_origin, x1)
+            # projection after attn
             x1 = self._post_attn_proj(x1)
             if self.reciprocal:
                 x2 = self.attn_func(
@@ -304,6 +331,10 @@ class AttentionLayer(nn.Module):
                 )
                 if self.get_attn_weight:
                     x2, attn_weight2 = x2
+                # gate
+                if self.gate:
+                    x2 = self.vga_module.forward(v1 if self.vga else x2_origin, x2)
+                # projection after attn
                 x2 = self._post_attn_proj(x2)
         if not x2_input:
             return x1, attn_weight1

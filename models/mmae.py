@@ -57,6 +57,11 @@ class MMAEViT(nn.Module):
             num_reg_tokens = 0,
             dec_with_reg = False,  # deprecate register tokens before decoding.
             # VGA
+            gate = False,
+            gate_type = 'cond_per_head',
+            vga = True,
+            gate_mlp_ratio = 0.25,
+            gate_by_all_feat = False,
         ):
         super().__init__()
         self.img_size = to_2tuple(img_size)
@@ -82,7 +87,8 @@ class MMAEViT(nn.Module):
         # self-attention encoder
         self.self_attn_encoder = SelfAttnViT(
             enc_depth_self_attn, enc_dim, enc_num_heads, mlp_ratio, qkv_bias=True,
-            proj_bias=True, norm_layer=norm_layer, rope_func=self.rope if hasattr(self, 'rope') else None, get_attn_weight=False
+            proj_bias=True, norm_layer=norm_layer, rope_func=self.rope if hasattr(self, 'rope') else None, get_attn_weight=False,
+            gate=gate, gate_type=gate_type, vga=vga, gate_mlp_ratio=gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
         )
         # cross-attention encoder
         self.cros_attn_encoder = self._set_cross_attn_encoder(
@@ -94,7 +100,8 @@ class MMAEViT(nn.Module):
         self.decoder_embed = nn.Linear(enc_dim, dec_dim, bias=True)
         self.self_attn_decoder = SelfAttnViT(
             dec_depth, dec_dim, dec_num_heads, mlp_ratio, qkv_bias=True, proj_bias=True,
-            norm_layer=norm_layer, rope_func=self.rope if hasattr(self, 'rope') else None, get_attn_weight=False
+            norm_layer=norm_layer, rope_func=self.rope if hasattr(self, 'rope') else None, get_attn_weight=False,
+            gate=gate, gate_type=gate_type, vga=vga, gate_mlp_ratio=gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
         )
 
         # mask_token.
@@ -113,11 +120,15 @@ class MMAEViT(nn.Module):
         self.initialize_weights()
 
 
-    def _set_cross_attn_encoder(self, enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, norm_layer, rope, get_attn_weight):
+    def _set_cross_attn_encoder(self, enc_depth_cros_attn, 
+                                enc_dim, enc_num_heads, mlp_ratio, 
+                                norm_layer, rope, get_attn_weight,
+                                gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat):
         # for overriding.
         return CrossAttnViT(
             enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, qkv_bias=True, proj_bias=True,
-            norm_layer=norm_layer, rope_func=rope, get_attn_weight=get_attn_weight, reciprocal=True
+            norm_layer=norm_layer, rope_func=rope, get_attn_weight=get_attn_weight, reciprocal=True,
+            gate=gate, gate_type=gate_type, vga=vga, gate_mlp_ratio=gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
         )
 
     
@@ -153,8 +164,14 @@ class MMAEViT(nn.Module):
         mask = torch.cat((reg_mask, mask), dim=1).contiguous()
         return x, pos, posvis, mask
     
-    def exclude_register_tokens(self, x, pos, posvis, mask, attn_weight=None):
-        raise NotImplementedError
+    def exclude_register_tokens(self, x, pos, mask, attn_weight=None):
+        x = x[:, self.num_reg_tokens:]
+        pos = pos[:, self.num_reg_tokens:]
+        mask = mask[:, self.num_reg_tokens:]
+        if attn_weight is not None:
+            # attn_weight: B, N, N
+            attn_weight = attn_weight[:, self.num_reg_tokens:, self.num_reg_tokens:]
+        return x, pos, mask, attn_weight
 
     def _encode_image(self, image1:torch.Tensor, image2:torch.Tensor, do_mask1=False, do_mask2=False, return_all_blocks = False):
         """
@@ -300,7 +317,23 @@ class MMAEViT(nn.Module):
                 img1, img2, do_mask, do_mask, False
             )
         # decoder
+        if self.num_reg_tokens > 0 and not self.dec_with_reg:
+            feat1, pos1, masks1, attn_weight1 = self.exclude_register_tokens(
+                feat1, pos1, masks1, attn_weight1 if self.get_attn_weight else None
+            )
+            feat2, pos2, masks2, attn_weight2 = self.exclude_register_tokens(
+                feat2, pos2, masks2, attn_weight2 if self.get_attn_weight else None
+            )
+
         decfeat1, decfeat2 = self._decode(feat1, pos1, masks1, feat2, pos2, masks2, False)
+
+        if self.num_reg_tokens > 0 and self.dec_with_reg:
+            decfeat1, pos1, masks1, attn_weight1 = self.exclude_register_tokens(
+                decfeat1, pos1, masks1, attn_weight1 if self.get_attn_weight else None
+            )
+            decfeat2, pos2, masks2, attn_weight2 = self.exclude_register_tokens(
+                decfeat2, pos2, masks2, attn_weight2 if self.get_attn_weight else None
+            )
 
         # prediction head
         out1 = self.prediction_head(decfeat1)
@@ -355,15 +388,26 @@ class CroCoViT(MMAEViT):
             norm_layer:str = 'layer_norm',
             pos_embd:str = 'RoPE100',  # here we only support RoPE, deprecating cosine, as RoPE performs much better than cosine
             get_attn_weight: bool = False,
+            # VGA
+            gate = False,
+            gate_type = 'cond_per_head',
+            vga = True,
+            gate_mlp_ratio = 0.25,
+            gate_by_all_feat = False,
         ):
         super().__init__(img_size, patch_size, mask_ratio, enc_depth_self_attn, 
                          enc_depth_cros_attn, enc_dim, enc_num_heads, dec_depth, dec_dim, 
-                         dec_num_heads, mlp_ratio, norm_layer, pos_embd, get_attn_weight)
+                         dec_num_heads, mlp_ratio, norm_layer, pos_embd, get_attn_weight,
+                         gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
         
-    def _set_cross_attn_encoder(self, enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, norm_layer, rope, get_attn_weight):
+    def _set_cross_attn_encoder(self, enc_depth_cros_attn, 
+                                enc_dim, enc_num_heads, mlp_ratio, 
+                                norm_layer, rope, get_attn_weight,
+                                gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat):
         return CrossAttnViT(
             enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, qkv_bias=True, proj_bias=True,
-            norm_layer=norm_layer, rope_func=rope, get_attn_weight=get_attn_weight, reciprocal=False
+            norm_layer=norm_layer, rope_func=rope, get_attn_weight=get_attn_weight, reciprocal=False,
+            gate=gate, gate_type=gate_type, vga=vga, gate_mlp_ratio=gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
         )
     
 
@@ -411,7 +455,7 @@ class CroCoViT(MMAEViT):
             out1, out2 = x1, x2
 
         return out1, attn_weight1, pos1, masks1, out2, attn_weight2, pos2, masks2
-    
+
 
     def forward(self, img1, img2, do_mask=False, **kwargs):
         """
@@ -427,14 +471,28 @@ class CroCoViT(MMAEViT):
         # encoder
         if self.get_attn_weight:
             feat1, attn_weight1, pos1, masks1, feat2, attn_weight2, pos2, masks2 = self._encode_image(
-                img1, img2, do_mask, False, False, kwargs.get("reciprocal", True)
+                img1, img2, do_mask, False, False, kwargs.get("reciprocity", True)
             )
         else:
             feat1, pos1, masks1, feat2, pos2, masks2 = self._encode_image(
-                img1, img2, do_mask, False, False, kwargs.get("reciprocal", True)
+                img1, img2, do_mask, False, False, kwargs.get("reciprocity", True)
             )
         # decoder
+        if self.num_reg_tokens > 0 and not self.dec_with_reg:
+            feat1, pos1, masks1, attn_weight1 = self.exclude_register_tokens(
+                feat1, pos1, masks1, attn_weight1 if self.get_attn_weight else None
+            )
+        
         decfeat1 = self._decode(feat1, pos1, masks1, False)
+
+        if self.num_reg_tokens > 0 and self.dec_with_reg:
+            feat1, pos1, masks1, attn_weight1 = self.exclude_register_tokens(
+                feat1, pos1, masks1, attn_weight1 if self.get_attn_weight else None
+            )
+        if self.get_attn_weight and kwargs.get("reciprocity", True):
+            feat2, pos2, masks2, attn_weight2 = self.exclude_register_tokens(
+                feat2, pos2, masks2, attn_weight2
+            )
 
         # prediction head
         out1 = self.prediction_head(decfeat1)
