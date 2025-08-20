@@ -59,6 +59,7 @@ class PerHeadLinear(nn.Module):
         self.weight = nn.Parameter(
             torch.empty((n_heads, in_features, out_features))
         )
+        self.apply_bias = bias
         if bias:
             self.bias = nn.Parameter(
                 torch.empty((n_heads, out_features))
@@ -69,7 +70,7 @@ class PerHeadLinear(nn.Module):
 
     def initialize_weight(self):
         nn.init.xavier_uniform_(self.weight)
-        if self.bias:
+        if self.apply_bias:
             nn.init.constant_(self.bias, 0.)
         
     def forward(self, x):
@@ -78,13 +79,16 @@ class PerHeadLinear(nn.Module):
         return: b, n, h, o_feat
         '''
         x = torch.einsum("bnhd,hdo -> bnho", x, self.weight)
-        if self.bias:
+        if self.apply_bias:
             x = x + self.bias
         return x
 
 
 class PerHeadMlp(nn.Module):
     def __init__(self, dim, n_heads, mlp_ratio=0.25, use_linear=False):
+        '''
+        PerHeadLinear implementation is about 8.5x faster than common linear implementation
+        '''
         super().__init__()
         self.n_heads = n_heads
         self.dim = dim
@@ -202,3 +206,42 @@ class VGA(nn.Module):
         
         attn_out = attn_out * gate
         return attn_out
+
+
+if __name__ == '__main__':
+    from time import time
+    from tqdm import tqdm
+    b = 256
+    n = 196
+    h = 12
+    total_d = 768
+    d = total_d // h
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    
+    common_mlp = PerHeadMlp(total_d, h, 0.25, True).to(device)
+    perhead_mlp = PerHeadMlp(total_d, h, 0.25, False).to(device)
+
+    dummy = torch.rand((b,n,h,d), dtype=torch.float32, device=device)
+    
+    warmup = 50
+    test = 50
+    t = 0
+    cnt = 0
+    for i in tqdm(range(warmup + test), desc="common mlp"):
+        s = time()
+        x = common_mlp.forward(dummy)
+        interval = time() - s
+        if i >= warmup:
+            t += interval
+            cnt += 1
+    print("common mlp: ", t / cnt)
+    t = 0
+    cnt = 0
+    for i in tqdm(range(warmup + test), desc="perhead mlp"):
+        s = time()
+        x = perhead_mlp.forward(dummy)
+        interval = time() - s
+        if i >= warmup:
+            t += interval
+            cnt += 1
+    print("perhead mlp: ", t / cnt)
