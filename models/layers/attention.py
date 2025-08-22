@@ -241,9 +241,10 @@ class AttentionLayer(nn.Module):
         # gate
         self.gate = gate
         self.vga = vga
-        self.vga_module = VGA(
-            self.dim, self.num_heads, gate_type, gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
-        )
+        if self.gate:
+            self.vga_module = VGA(
+                self.dim, self.num_heads, gate_type, gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
+            )
 
 
     def _x_to_qkv(self, x, q:bool=True, k:bool=True, v:bool=True):

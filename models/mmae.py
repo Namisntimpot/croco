@@ -93,7 +93,7 @@ class MMAEViT(nn.Module):
         # cross-attention encoder
         self.cros_attn_encoder = self._set_cross_attn_encoder(
             enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, norm_layer, 
-            self.rope if hasattr(self, 'rope') else None, get_attn_weight=False,
+            self.rope if hasattr(self, 'rope') else None, get_attn_weight=self.get_attn_weight,
             gate=gate, gate_type=gate_type, vga=vga, gate_mlp_ratio=gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
         )
 
@@ -391,6 +391,9 @@ class CroCoViT(MMAEViT):
             norm_layer:str = 'layer_norm',
             pos_embd:str = 'RoPE100',  # here we only support RoPE, deprecating cosine, as RoPE performs much better than cosine
             get_attn_weight: bool = False,
+            # REG
+            num_reg_tokens = 0,
+            dec_with_reg = False,
             # VGA
             gate = False,
             gate_type = 'cond_per_head',
@@ -401,6 +404,7 @@ class CroCoViT(MMAEViT):
         super().__init__(img_size, patch_size, mask_ratio, enc_depth_self_attn, 
                          enc_depth_cros_attn, enc_dim, enc_num_heads, dec_depth, dec_dim, 
                          dec_num_heads, mlp_ratio, norm_layer, pos_embd, get_attn_weight,
+                         num_reg_tokens, dec_with_reg, 
                          gate, gate_type, vga, gate_mlp_ratio, gate_by_all_feat)
         
     def _set_cross_attn_encoder(self, enc_depth_cros_attn, 
@@ -492,10 +496,10 @@ class CroCoViT(MMAEViT):
             feat1, pos1, masks1, attn_weight1 = self.exclude_register_tokens(
                 feat1, pos1, masks1, attn_weight1 if self.get_attn_weight else None
             )
-        if self.get_attn_weight and kwargs.get("reciprocity", True):
-            feat2, pos2, masks2, attn_weight2 = self.exclude_register_tokens(
-                feat2, pos2, masks2, attn_weight2
-            )
+            if self.get_attn_weight and kwargs.get("reciprocity", True):  # feat2 is meaningful.
+                feat2, pos2, masks2, attn_weight2 = self.exclude_register_tokens(
+                    feat2, pos2, masks2, attn_weight2
+                )
 
         # prediction head
         out1 = self.prediction_head(decfeat1)

@@ -1,0 +1,39 @@
+name: croco_new_arch_small_reg
+model:
+  task: matching
+  pretrain_type: mmae_new_arch
+  pretrained_ckpt: exp/mmae_newarch-small-reg-habitat_sim-mask_0.8/checkpoint-49.pth
+  # img_size: 224
+  kwargs: 
+    mask_ratio: 0.8
+    enc_depth_self_attn: 8
+    enc_depth_cros_attn: 8
+    enc_dim: 768
+    enc_num_heads: 12
+    dec_depth: 8
+    dec_dim: 512
+    dec_num_heads: 16
+    mlp_ratio: 4
+    norm_layer: layer_norm
+    pos_embd: RoPE100
+    get_attn_weight: true
+    # register tokens
+    num_reg_tokens: 4
+    dec_with_reg: true
+
+
+data:
+  img_size: [240, 240]  # h*w
+  hpatches_list_csv:
+    pair_1_2: datasets/hpatches/hpatches_1_2.csv
+    pair_1_3: datasets/hpatches/hpatches_1_3.csv
+    pair_1_4: datasets/hpatches/hpatches_1_4.csv
+    pair_1_5: datasets/hpatches/hpatches_1_5.csv
+    pair_1_6: datasets/hpatches/hpatches_1_6.csv
+    pair_all: datasets/hpatches/hpatches_all.csv
+
+inference:
+  reciprocity: true
+  suppress_1st_token: false
+  attn_layers_adopted: null
+  temperature: 0.02

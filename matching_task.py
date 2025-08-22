@@ -274,6 +274,7 @@ def main():
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print("use device: ", device)
     # initialize model
+    # print(model_config.kwargs)
     model:torch.nn.Module = make_model(model_config.task, model_config.pretrain_type, data_config.img_size, **model_config.kwargs)
     ckpt = torch.load(model_config.pretrained_ckpt, map_location='cpu')
     ckpt = ckpt['model'] if 'model' in ckpt else ckpt
