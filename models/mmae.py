@@ -93,7 +93,8 @@ class MMAEViT(nn.Module):
         # cross-attention encoder
         self.cros_attn_encoder = self._set_cross_attn_encoder(
             enc_depth_cros_attn, enc_dim, enc_num_heads, mlp_ratio, norm_layer, 
-            self.rope if hasattr(self, 'rope') else None, get_attn_weight=False
+            self.rope if hasattr(self, 'rope') else None, get_attn_weight=False,
+            gate=gate, gate_type=gate_type, vga=vga, gate_mlp_ratio=gate_mlp_ratio, gate_by_all_feat=gate_by_all_feat
         )
 
         # self-attention decoder
@@ -153,11 +154,13 @@ class MMAEViT(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+        elif hasattr(m, 'initialize_weight'):
+            m.initialize_weight()
 
     def cat_register_tokens(self, reg_tokens, x, pos, posvis, mask):
         b, nreg = reg_tokens.shape[:2]
-        reg_pos = PositionGetter.zero_postitions(b, nreg, x.device)
-        reg_mask = torch.zeros((b, nreg), dtype=bool)
+        reg_pos = PositionGetter.zero_positions(b, nreg, x.device)
+        reg_mask = torch.zeros((b, nreg), dtype=bool, device=x.device)
         x = torch.cat((reg_tokens, x), dim=1).contiguous()
         pos = torch.cat((reg_pos, pos), dim=1).contiguous()
         posvis = torch.cat((reg_pos, posvis), dim=1).contiguous()
@@ -234,7 +237,7 @@ class MMAEViT(nn.Module):
 
         # add register tokens
         if self.num_reg_tokens > 0:
-            reg_tokens = self.reg_tokens.expand(B, self.num_reg_tokens, -1)
+            reg_tokens = self.reg_tokens.expand(B, self.num_reg_tokens, -1).to(x1.device)
             x1, pos1, posvis1, masks1 = self.cat_register_tokens(
                 reg_tokens, x1, pos1, posvis1, masks1
             )

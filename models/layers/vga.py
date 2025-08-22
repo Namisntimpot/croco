@@ -143,11 +143,7 @@ class PerHeadMlp(nn.Module):
         '''x: b, n, h, d
         out: b, n, h, 1
         '''
-        self.forward_func(x)
-        # if self.use_linear:
-        #     return self.forward_common_linear(x)
-        # else:
-        #     return self.forward_per_head_linear(x)
+        return self.forward_func(x)
 
 
 
@@ -220,6 +216,7 @@ if __name__ == '__main__':
     
     common_mlp = PerHeadMlp(total_d, h, 0.25, True).to(device)
     perhead_mlp = PerHeadMlp(total_d, h, 0.25, False).to(device)
+    # perhead_mlp.apply(lambda m: print(type(m)))
 
     dummy = torch.rand((b,n,h,d), dtype=torch.float32, device=device)
     

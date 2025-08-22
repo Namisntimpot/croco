@@ -1,6 +1,6 @@
 #!/bin/bash
 if [[ $# -eq 0 ]]; then
-    echo "usage: train.sh config_path platform(local/cluster) gpu_type(4090/l20, only required when platform==cluster)"
+    echo "usage: train.sh config_path exp_dir platform(local/cluster) gpu_type(4090/l20, only required when platform==cluster)"
     exit
 fi
 
@@ -18,7 +18,8 @@ num_cpu=10
 memory=160
 datasets=habitat_release
 data_dir=../data/habitat-sim-data
-output_dir="exp/mmae_newarch-small-habitat_sim-mask_0.8"
+# output_dir="exp/mmae_newarch-small-habitat_sim-mask_0.8"
+output_dir=$2
 
 mkdir -p $output_dir
 
@@ -26,9 +27,9 @@ echo "torchrun --nproc_per_node=$num_gpu pretrain_mmae_new_arch.py -cfg $config_
                  --batch_size $batchsize_per_gpu \
                  --epochs $sche_epoch --max_epoch $max_epoch --warmup_epochs $warmup_epochs --keep_freq $keep_freq --print_freq $keep_freq"
 
-platform=$2
+platform=$3
 if [[ "$platform" == "cluster" ]]; then
-    gpu_type=$3
+    gpu_type=$4
     echo "using dpflow"
     link_config="datasets.link_config.link_config"
     link_name="train"
